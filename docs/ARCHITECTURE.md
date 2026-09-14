@@ -1,10 +1,12 @@
-# AstralPartyBattleLog
+# 기술 노트
 
-Astral Party(Unity IL2CPP, BepInEx 6)의 전투를 턴별 텍스트 로그로 남기는 플러그인.
-읽기 전용 관찰자이고 게임 상태를 일절 바꾸지 않는다.
+이 플러그인이 왜 이런 모양인지, 그리고 손대기 전에 알아야 할 것들.
+**일반적인 BepInEx 모딩과 전제가 다르므로 먼저 읽을 것.**
 
-배경 조사 결과는 `docs/FINDINGS.md`, 구현 사양은 `docs/LOGGER-DESIGN.md`에 있다.
-먼저 읽을 것 — 이 게임은 일반적인 BepInEx 모딩과 전제가 다르다.
+기여 규칙과 지켜야 할 경계는 [CONTRIBUTING.md](../CONTRIBUTING.md)에 따로 있다.
+조사 과정은 [FINDINGS.md](FINDINGS.md), 초기 설계는 [LOGGER-DESIGN.md](LOGGER-DESIGN.md).
+
+---
 
 ## 이 게임의 가장 중요한 제약
 
@@ -76,19 +78,6 @@ Socket.EndReceive   Postfix ─┘   (소켓별 상태)   (35바이트 BE 헤더
   `GameLogic.SummonLogic`이 받아서 칸 위 오브젝트를 만들고 지운다.
   로그에는 **`{캐릭터} 스킬 사용` 한 줄만** 남긴다 (아래 참고).
 
-## 디코더를 고칠 땐 먼저 대조할 것
-
-`.claude/skills/proto-field-audit/` — 디컴파일된 원본에서 **실제 태그 바이트**를
-뽑아 손으로 짠 디코더와 대조한다. 손 디코더는 틀려도 예외가 안 나고 "그 정보가
-없는 것"처럼 보이기 때문에, 눈으로 필드 번호만 맞춰보면 반드시 놓친다.
-
-```bash
-python .claude/skills/proto-field-audit/scripts/dump_tags.py <디컴파일루트> HeroBuffChangeS2C
-```
-
-**`FieldNumber` 선언을 근거로 삼지 말 것.** 그건 번호만 알려준다. 실제로 틀리는
-곳은 wire type과 모양(packed / map / message)이고 그건 직렬화 코드에만 나온다.
-
 ## 이 게임 protobuf의 함정 (실측)
 
 **숫자 필드가 varint가 아니라 `sfixed32`/`sfixed64`다.** enum만 varint를 쓴다.
@@ -127,41 +116,6 @@ id는 fixed64, 수치는 fixed32(부호 있음), enum은 varint로 보면 대체
 명단에 없는 id는 `?{id}`로 남긴다. 몹으로 단정하지 않는 게 중요하다 — 그렇게 두면
 명단이 늦게 도착했을 때 플레이어가 조용히 몹으로 찍히고, 로그만 봐서는 모른다.
 `?`가 보이면 `Room` 수집이 덜 된 것이다.
-
-## 허용목록은 정책이 아니라 구조다
-
-`Op.Allowed` 밖의 메시지는 **본문을 파싱하지 않는다.** 출력 필터로 가리는 게 아니라
-디코더가 없는 것이고, 그래서 코드를 읽으면 안전이 증명된다.
-
-"일단 다 덤프하고 나중에 거르자"로 바꾸지 말 것. 실수 한 줄이 PVP 치트가 된다.
-
-### 카드에 그은 선 (v0.5.0)
-
-카드 기록은 이 모드의 핵심 기능이라 넣었다. 대신 경계를 **메시지 종류**로 긋는다:
-
-| | 디코딩 | 근거 |
-| --- | --- | --- |
-| `UseEffectCardS2C`(5056) | **한다** | 보드에서 공개적으로 쓴 카드. 값이 설정 id다 |
-| 〃 의 스킬 분기 | **한다** | 카드가 아니라 스킬이다. `LogCards`와 무관하게 남긴다 |
-| `BattleUseCardS2C`(5036) | "냈다"만 | 값이 카드 uid라 종류를 알 수 없다 |
-| `BattleRole.useCards`(필드 5) | **안 읽는다** | 역시 uid다 (packed sfixed32). 실측 확인 |
-| **`HeroAttrEffect.Card`(필드 9)** | **안 한다** | 손패 변경. 마스킹된 `-1`이 오는 게 여기다 |
-
-즉 **"카드를 냈다"는 읽고, "손패가 바뀌었다"는 읽지 않는다.** 손패를 읽는 코드
-경로는 여전히 존재하지 않는다.
-
-`ShopBuyS2C`(5030)는 이름이 상점이라 골드 관련으로 착각하기 쉽지만 필드가
-`BuyCards`/`Cards`/`Alreadys`인 **카드 메시지**다. 허용목록에 넣지 말 것.
-상점에서 오간 돈은 `UpdateHeroAttr`의 `HeroAttrEffect.Gold`(필드 2)로 온다.
-
-`cardId <= 0`은 모든 경로에서 버린다 — 게임 클라이언트 자신의 `CardId >= 0` 검사와
-같은 규칙이다. 실제 패킷에서 마스킹된 카드가 `ffffffff`(-1)로 오는 것을 확인했다.
-
-감사 방법: `grep -rn 'Lookup("card"' --include='*.cs' Log` — **카드 종류를 이름으로
-바꾸는 곳은 `CardLabel` 한 군데뿐이고, `DecodeUseEffectCard`만 그걸 부른다.**
-여기가 늘어나면 경계가 움직인 것이다.
-
-`LogCards` 설정으로 끌 수 있지만, 손패를 읽지 않는 성질은 설정과 무관하게 유지된다.
 
 ## 카드/스킬/버프 이름표
 
@@ -596,21 +550,6 @@ PK(battle)만 예외다 — 머리줄은 공격자 이름인데 효과는 방어
 `ActionOverTimeLogS2C`는 타임아웃 기록용이다). 확인함 — 그래서 "행동이 끝났다"를
 알려면 다음 턴 시작을 기다리는 수밖에 없었다.
 
-## 빌드 / 배치
-
-```bash
-dotnet build AstralPartyBattleLog.csproj -c Release
-cp bin/Release/net6.0/AstralPartyBattleLog.dll \
-   "D:/SteamLibrary/steamapps/common/Astral Party/8vJXnINT/BepInEx/plugins/AstralPartyBattleLog/"
-```
-
-`names.tsv`는 복사하지 않아도 된다 — 없으면 플러그인이 스스로 만든다.
-
-`.csproj`의 `<BepInExDir>`가 게임 경로를 가리킨다. 참조 오류가 나면 게임의
-`BepInEx/core` 또는 `BepInEx/interop`에서 dll을 찾아 `<Reference>`를 추가하면 된다.
-
-제거는 `BepInEx/plugins/AstralPartyBattleLog/` 폴더를 지우면 끝.
-
 ## 검증 로그 읽기
 
 게임 실행 후:
@@ -625,16 +564,3 @@ cp bin/Release/net6.0/AstralPartyBattleLog.dll \
   쓴다. 허용목록 안의 opcode만 대상이 되므로 카드 메시지는 덤프되지 않는다.
   필드 번호와 wire type을 손으로 읽는 게 가장 빠른 진단이다.
 
-## 참고 자료
-
-- `docs/cmdid-table.tsv` — `RPCMsgManager`에서 추출한 cmdID ↔ 메시지 289개
-- `docs/types-all.txt` — `AstralParty.Runtime` 전체 타입 9,803개 (gitignore됨)
-- `ref/AstralParty.Runtime.dll` — 추출한 게임 어셈블리 (gitignore됨, 재배포 금지)
-
-**게임에서 나온 것은 커밋하지 않는다** — `ref/`, `docs/types-all.txt`, `names.tsv`
-셋 다 `.gitignore`에 있다. 리포의 MIT는 여기 코드에만 적용되고, 게임 자산을
-재배포할 권리를 주지 않는다 (`LICENSE` 아래쪽에도 적어뒀다).
-
-어셈블리는 Addressables 다운로드 캐시에서 나왔다
-(`%USERPROFILE%\AppData\LocalLow\feimo\AstralParty_INT\com.unity.addressables\AssetBundles\`).
-설치 폴더에는 없다. 추출은 `unity-bundle-inspector` 스킬 참고.

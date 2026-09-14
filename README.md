@@ -43,7 +43,7 @@ Astral Party의 전투를 턴별 텍스트 로그로 남기는 BepInEx 플러그
 **상대 손패는 읽지 않는다.** 이건 설정으로 끄고 켜는 문제가 아니라 **디코더가
 아예 없다.** 서버 메시지 중 본문을 해석하는 것은 `Log/Opcodes.cs`의 `Op.Allowed`에
 있는 것뿐이고, 손패가 오가는 메시지는 그 목록에 없다. 무엇을 읽고 무엇을 안 읽는지는
-`.claude/CLAUDE.md`의 "카드에 그은 선"에 정리해 뒀다.
+[CONTRIBUTING.md](CONTRIBUTING.md)의 "카드에 그은 선"에 정리해 뒀다.
 
 읽는 것은 이렇다 — 보드에서 공개적으로 쓴 효과카드, PK에 카드를 냈다는 사실(종류는
 서버가 안 보낸다), HP/공격/방어/버프 변화, 주사위, 칩, 골드.
@@ -82,7 +82,9 @@ dotnet build AstralPartyBattleLog.csproj -c Release
 빌드 결과는 `bin/Release/net6.0/AstralPartyBattleLog.dll`.
 
 개발 배경과 제약(이 게임은 HybridCLR 핫업데이트라 게임 로직에 Harmony를 걸 수 없다)은
-`.claude/CLAUDE.md`에 자세히 적어 뒀다.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에 자세히 적어 뒀다.
+기여할 생각이라면 [CONTRIBUTING.md](CONTRIBUTING.md)도 함께 볼 것 — 이 프로젝트에는
+기능보다 먼저 지켜야 하는 경계가 있다.
 
 ## 크레딧
 
