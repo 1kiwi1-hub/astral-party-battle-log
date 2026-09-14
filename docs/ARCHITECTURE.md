@@ -162,7 +162,7 @@ sfixed32**라 숫자로 읽으면 통째로 건너뛴다.
 
 | | 어디서 | 언제 |
 | --- | --- | --- |
-| `Log/NameHarvest.cs` | **게임 메모리**의 `TextAsset` | 배포본. `names.tsv`가 없으면 첫 실행에 |
+| `Log/NameHarvest.cs` | **Addressables로 직접 로드** | 배포본. `names.tsv`가 없으면 첫 실행에 |
 | `tools/extract_names.py` | 번들 파일 (UnityPy) | 개발용 오프라인 |
 
 **표 구성과 파싱은 `Log/NameConfig.cs` 한 곳에 있다** — Unity에 의존하지 않게
@@ -172,12 +172,58 @@ sfixed32**라 숫자로 읽으면 통째로 건너뛴다.
 `extract_names.py` 결과와 행 단위 비교했다 (**1010행 완전 일치**).
 
 **`names.tsv`는 리포에 커밋하지 않는다.** 게임 텍스트 + 한글패치 번역문이라
-재배포할 수 없다. 그래서 플러그인이 각자의 게임에서 직접 만든다 — 번들 포맷을
-구현할 필요 없이 `Resources.FindObjectsOfTypeAll<TextAsset>()`로 **이미 로드된**
-것만 줍는다 (폰트 찾기와 같은 방법). 설정 에셋은 로비에서는 아직 안 올라와 있을 수
-있어서 `FramePump`가 5초 간격으로 40번까지 다시 시도하고, **필요한 16개가 다 모일
-때까지 만들지 않는다** — 덜 모인 채로 만들면 반쪽짜리 파일이 남고 다시 만들 계기가
-없다. 성공하면 `NameTable.Adopt`로 **재시작 없이** 그 판부터 이름이 나온다.
+재배포할 수 없다. 그래서 플러그인이 각자의 게임에서 직접 만든다.
+
+### 설정 에셋은 "주워 담을" 수 없다 (실측으로 폐기한 접근)
+
+게임의 `StaticConfigure.InitAsync`는 이렇게 생겼다:
+
+```csharp
+AddressableHelper.LoadAssetsAsync<TextAsset>({"GameData_INT"}, OnConfigureLoaded, …)
+…
+Addressables.Release<IList<TextAsset>>(awaiter.GetResult());   // 파싱하자마자 놓는다
+```
+
+`OnConfigureLoaded`가 `case "Card":` → `CardConfigure.Parser.ParseFrom(asset.bytes)`로
+파싱해 정적 필드에 넣고, **원본 TextAsset은 곧바로 해제된다.**
+
+처음엔 폰트를 찾을 때처럼 `Resources.FindObjectsOfTypeAll<TextAsset>()`로 주워
+담으려 했는데 **구조적으로 불가능했다.** BepInEx 체인로더는 Unity 런타임이 올라온
+뒤에야 플러그인을 로드해서, 우리 첫 스캔이 그 이후다:
+
+```
+Scanning for config assets: 0/16 captured, 4925 TextAssets visible (scan 1, frame 384).
+```
+
+**TextAsset 4925개가 멀쩡히 보이는데 설정 에셋만 없다.** 찾는 방법이 잘못된 게
+아니라 이미 해제된 뒤인 것이고, 스캔 간격을 아무리 좁혀도 소용없다.
+
+### 그래서 같은 라벨로 우리가 직접 부른다
+
+```csharp
+Il2CppSystem.Object key = (Il2CppSystem.String)"GameData_INT";
+_handle = Addressables.LoadAssetsAsync<TextAsset>(key, null);
+```
+
+**핸들을 우리가 쥐고 있는 동안은 해제되지 않으므로 타이밍 경합이 사라진다.**
+캐시에서 읽는 것이라 다운로드도 없다. 지켜야 할 것 셋:
+
+- **콜백 자리에 `null`을 넘긴다.** IL2CPP 쪽 델리게이트 등록은 이 게임에서 확정
+  크래시다. 콜백 없이 핸들만 받고 `IsDone`을 프레임 펌프에서 폴링하면 델리게이트도
+  코루틴도 필요 없다.
+- **다 읽으면 반드시 `Release`한다.** 안 놓으면 설정 번들이 통째로 메모리에 남는다.
+  게임이 곧바로 놓는 이유도 그것이다. 시간 초과(20초) 경로에서도 놓는다.
+- **`Addressables` 초기화 전에 부르면 실패한다.** `WarmupFrames`만큼 기다린다.
+
+안전 근거: `LoadAssetsAsync<TextAsset>`와 `AsyncOperationHandle<IList<TextAsset>>`
+제네릭 인스턴스를 **게임 자신이 쓰고 있어서** IL2CPP 메타데이터에 이미 존재한다.
+새 타입을 만드는 게 아니라 있는 걸 부르는 것이다.
+
+함정 하나 — **interop 인터페이스는 상속 멤버를 물려받지 않는다.** `IList<T>`에는
+`Count`가 없고 `ICollection<T>`에만 있어서 한 겹 캐스팅해야 한다.
+
+성공하면 `NameTable.Adopt`로 **재시작 없이** 그 판부터 이름이 나온다.
+실측 결과 오프라인 추출기와 **1010행 완전 일치**했다.
 
 오프라인 재생성 (게임을 한 번 실행해 Addressables 캐시가 찬 뒤에):
 

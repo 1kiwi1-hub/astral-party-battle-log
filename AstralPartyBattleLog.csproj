@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
 
     <!-- 본인 게임의 BepInEx 폴더 위치에 맞게 수정 -->
     <BepInExDir>D:\SteamLibrary\steamapps\common\Astral Party\8vJXnINT\BepInEx</BepInExDir>
@@ -59,6 +59,18 @@
       <HintPath>$(BepInExDir)\interop\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Addressables — 게임이 놓아버린 설정 에셋을 우리가 직접 불러오는 데 쓴다.
+         BepInEx 플러그인은 프레임 2500쯤에야 올라오는데 게임은 그 전에 설정을
+         로드하고 곧바로 Release한다. 주워 담는 걸로는 절대 못 잡는다 (실측). -->
+    <Reference Include="Unity.Addressables">
+      <HintPath>$(BepInExDir)\interop\Unity.Addressables.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.ResourceManager">
+      <HintPath>$(BepInExDir)\interop\Unity.ResourceManager.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
     <!-- Input.GetKeyDown (토글 키) -->
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(BepInExDir)\interop\UnityEngine.InputLegacyModule.dll</HintPath>

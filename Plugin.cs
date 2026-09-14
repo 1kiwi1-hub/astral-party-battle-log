@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.0")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.1")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
@@ -75,7 +75,7 @@ public class Plugin : BasePlugin
             }
             catch (Exception e)
             {
-                Log.LogWarning($"로그 파일 준비 실패, 콘솔로만 남긴다: {e.Message}");
+                Log.LogWarning($"Could not prepare the log file; overlay only: {e.Message}");
             }
         }
 
@@ -90,10 +90,12 @@ public class Plugin : BasePlugin
 
         string namesPath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "names.tsv");
         var names = NameTable.Load(namesPath, Log.LogWarning);
-        if (names.Count > 0) Log.LogInfo($"이름표 {names.Count}개 로드");
+        if (names.Count > 0) Log.LogInfo($"Loaded {names.Count} names.");
 
-        // 이름표가 없으면 게임이 올려둔 설정 에셋에서 직접 만든다. 로비에서는 아직
-        // 안 올라와 있을 수 있어서 프레임 펌프가 몇 초 간격으로 다시 시도한다.
+        // 이름표가 없으면 게임이 올리는 설정 에셋에서 직접 만든다.
+        //
+        // 게임은 파싱하자마자 Addressables.Release로 놓아버리기 때문에(실측), 켜자마자
+        // 촘촘히 훑어서 살아 있는 동안 잡아야 한다. 프레임 펌프가 그걸 몰아준다.
         NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
 
         var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
@@ -104,7 +106,7 @@ public class Plugin : BasePlugin
         {
             if (!Enum.TryParse(overlayKey.Value, ignoreCase: true, out KeyCode toggle))
             {
-                Log.LogWarning($"ToggleKey '{overlayKey.Value}'를 알 수 없다. F9로 대체한다.");
+                Log.LogWarning($"Unknown ToggleKey '{overlayKey.Value}'; falling back to F9.");
                 toggle = KeyCode.F9;
             }
             LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value, overlayWidth.Value,
@@ -128,16 +130,16 @@ public class Plugin : BasePlugin
             _harmony.PatchAll(typeof(EndReceivePatch));
             // 오버레이를 꺼도 씬 감지는 필요하므로 항상 건다.
             _harmony.PatchAll(typeof(FramePump));
-            Log.LogInfo("소켓 패치 완료. 전투 로그 수집 대기 중.");
+            Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
         }
         catch (Exception e)
         {
             // 패치 실패가 게임을 막으면 안 된다. 로그만 남기고 조용히 비활성화.
-            Log.LogError($"소켓 패치 실패 — 로그 수집이 동작하지 않는다: {e}");
+            Log.LogError($"Socket patching failed - no battle logging will happen: {e}");
             SocketTap.OnFrame = null;
         }
 
-        if (path is not null) Log.LogInfo($"로그 파일: {path}");
+        if (path is not null) Log.LogInfo($"Battle log file: {path}");
     }
 
     public override bool Unload()

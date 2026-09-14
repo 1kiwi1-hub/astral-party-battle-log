@@ -76,6 +76,7 @@ internal static class NameConfig
 
         foreach ((string kind, string info, int nameField, string strings) in Tables)
         {
+            if (!assets.ContainsKey(info) || !assets.ContainsKey(strings)) continue;
             Dictionary<long, long> ids = ParseInfo(assets[info], nameField);
             Dictionary<long, string> texts = ParseStrings(assets[strings]);
             foreach ((long id, long nameId) in ids.OrderBy(kv => kv.Key))
@@ -84,12 +85,14 @@ internal static class NameConfig
         }
 
         foreach ((string kind, string info, int field, string[] values, string fallback) in Enums)
+            if (assets.ContainsKey(info))
             foreach ((long id, long value) in ParseValues(assets[info], field).OrderBy(kv => kv.Key))
                 rows.Add((kind, id, value > 0 && value < values.Length ? values[value] : fallback));
 
         // 캐릭터/몹 → 스킬 이름 목록. 위에서 만든 skill 이름을 그대로 쓴다.
         var skillNames = rows.Where(r => r.Kind == "skill").ToDictionary(r => r.Id, r => r.Text);
         foreach ((string kind, string info, int[] active, int[] packed) in Skills)
+            if (assets.ContainsKey(info))
             foreach ((long id, List<long> list) in ParseSkills(assets[info], active, packed).OrderBy(kv => kv.Key))
             {
                 var labels = new List<string>();

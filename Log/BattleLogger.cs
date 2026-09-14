@@ -140,12 +140,13 @@ internal sealed class BattleLogger
         if (!Op.Allowed.Contains(cmdId))
         {
             // 본문은 건드리지 않는다. opcode와 길이만 — 파이프라인 점검용.
-            if (_traceUnknown) Emit($"      . cmd={cmdId,-5} len={body.Length}");
+            if (_traceUnknown) Diag($"skip cmd={cmdId,-5} len={body.Length}");
             return;
         }
 
         // 진단용 원본 덤프. 허용목록 안에서만 동작하므로 카드 메시지는 절대 대상이 되지 않는다.
-        if (_hexDump.Contains(cmdId)) Emit($"      # {Op.Name(cmdId)}({cmdId}) len={body.Length} {Hex(body, 96)}");
+        if (_hexDump.Contains(cmdId))
+            Diag($"dump {Op.Name(cmdId)}({cmdId}) len={body.Length} {Hex(body, 96)}");
 
         switch (cmdId)
         {
@@ -424,7 +425,7 @@ internal sealed class BattleLogger
         // 전투가 진행되는 동안 같은 battleId로 여러 번 온다. 확정된 것만 남긴다.
         if (isEnd == 0)
         {
-            if (_traceUnknown) Emit($"      . Battle#{battleId} 진행중 len={body.Length}");
+            if (_traceUnknown) Diag($"battle #{battleId} in progress, len={body.Length}");
             return;
         }
 
@@ -1314,13 +1315,25 @@ internal sealed class BattleLogger
         EmitLine(line);
     }
 
+    /// <summary>
+    /// 전투 로그 한 줄. 가는 곳은 <b>오버레이와 battle-log.txt 둘뿐이다.</b>
+    ///
+    /// **BepInEx 로그(<c>LogOutput.log</c>)로는 보내지 않는다.** 전에는 보냈는데,
+    /// 한 판에 수백 줄이 쏟아져 플러그인 상태 메시지와 다른 모드의 로그가 그 사이에
+    /// 파묻혔다. 진단할 때 정작 봐야 할 줄을 못 찾는다.
+    ///
+    /// 진단용 출력(<c>TraceFrames</c>/<c>HexDumpOpcodes</c>)은 반대로 BepInEx 로그로만
+    /// 간다 — <see cref="Diag"/>.
+    /// </summary>
     private void EmitLine(string line)
     {
         string plain = Palette.Strip(line);
-        _log.LogInfo(plain);
         try { Mirror?.Invoke(line); } catch { /* 출력 하나가 막혀도 나머지는 계속 */ }
         WriteFile(plain);
     }
+
+    /// <summary>진단 한 줄. 전투 로그가 아니므로 BepInEx 로그로만 간다.</summary>
+    private void Diag(string line) => _log.LogInfo(line);
 
     private void WriteFile(string plain)
     {

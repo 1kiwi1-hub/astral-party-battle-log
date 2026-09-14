@@ -46,7 +46,7 @@ internal sealed class NameTable
         }
         catch (Exception e)
         {
-            warn($"names.tsv를 읽지 못했다, id로만 표시한다: {e.Message}");
+            warn($"Could not read names.tsv; ids will be shown instead: {e.Message}");
         }
         return table;
     }

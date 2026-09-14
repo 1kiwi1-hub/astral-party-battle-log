@@ -210,7 +210,7 @@ internal static class LogOverlay
         {
             // 오버레이 때문에 게임이 죽으면 안 된다. 한 번 실패하면 조용히 포기한다.
             _failed = true;
-            _log?.LogWarning($"오버레이를 띄우지 못했다, 파일 로그만 남긴다: {e}");
+            _log?.LogWarning($"Overlay failed; battle-log.txt keeps working: {e}");
         }
     }
 
@@ -432,7 +432,7 @@ internal static class LogOverlay
         textRect.offsetMax = new Vector2(-PadX, -lineHeight - PadY);
 
         _root.SetActive(_visible);
-        _log?.LogInfo($"오버레이 준비됨. {ToggleKey} 토글, 휠로 스크롤.");
+        _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel.");
     }
 
     private static Text AddText(GameObject parent, string name, TextAnchor anchor, Color color)
