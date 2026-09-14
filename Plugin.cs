@@ -1,0 +1,149 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
+using AstralPartyBattleLog.UI;
+using UnityEngine;
+using BepInEx;
+using BepInEx.Configuration;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+
+namespace AstralPartyBattleLog;
+
+[BepInPlugin(Guid, "Astral Party Battle Log", "1.25.0")]
+public class Plugin : BasePlugin
+{
+    public const string Guid = "astralparty.battlelog";
+
+    private Harmony? _harmony;
+
+    public override void Load()
+    {
+        ConfigEntry<bool> writeFile = Config.Bind(
+            "Output", "WriteFile", true,
+            "전투 로그를 플러그인 폴더의 battle-log.txt에도 남긴다.");
+
+        ConfigEntry<bool> traceFrames = Config.Bind(
+            "Diagnostics", "TraceFrames", false,
+            "허용목록 밖 프레임의 opcode와 길이를 남긴다. 본문은 파싱하지 않는다. " +
+            "파이프라인 점검용이며, 검증이 끝나면 false로 둘 것.");
+
+        ConfigEntry<string> hexDump = Config.Bind(
+            "Diagnostics", "HexDumpOpcodes", "",
+            "본문을 hex로 덤프할 cmdID 목록(쉼표 구분). 디코딩이 왜 안 맞는지 볼 때만 쓴다. " +
+            "허용목록 안의 opcode만 대상이 되므로 카드 메시지는 절대 덤프되지 않는다.");
+
+        ConfigEntry<bool> logPlayerIds = Config.Bind(
+            "Output", "LogPlayerIds", false,
+            "참가자 줄에 계정 uid를 같이 남긴다. Player.Id는 매치용 슬롯이 아니라 영구 계정 " +
+            "식별자라, 로그를 공유하면 남의 계정 정보가 같이 나간다. 디버깅할 때만 켤 것.");
+
+        ConfigEntry<bool> logCards = Config.Bind(
+            "Output", "LogCards", true,
+            "공개된 카드를 남긴다. 종류까지 아는 건 보드에서 쓴 효과카드뿐이고, PK에 낸 카드는 " +
+            "서버가 uid만 보내서 '카드 제출'까지만 남는다. 손패 변경(HeroAttrEffect.Card)은 " +
+            "이 옵션과 무관하게 디코딩하지 않는다.");
+
+        ConfigEntry<bool> showOverlay = Config.Bind(
+            "Overlay", "Enabled", true,
+            "전투 로그를 게임 화면에 겹쳐 보여준다.");
+        ConfigEntry<int> overlayLines = Config.Bind(
+            "Overlay", "Lines", 14, "오버레이에 유지할 줄 수.");
+        ConfigEntry<int> overlayFontSize = Config.Bind(
+            "Overlay", "FontSize", 15, "오버레이 글자 크기.");
+        ConfigEntry<int> overlayWidth = Config.Bind(
+            "Overlay", "Width", 780,
+            "오버레이 **최대** 가로 폭(1920 기준). 창은 가장 긴 줄에 맞춰 줄어들고, " +
+            "이 값을 넘는 줄만 넘쳐 흐른다.");
+        ConfigEntry<string> overlayKey = Config.Bind(
+            "Overlay", "ToggleKey", "F9",
+            "오버레이를 켜고 끄는 키. UnityEngine.KeyCode 이름을 쓴다 (F9, BackQuote 등).");
+        ConfigEntry<int> scrollLines = Config.Bind(
+            "Overlay", "ScrollLines", 3,
+            "마우스 휠 한 칸에 움직일 줄 수. 커서가 로그창 위에 있을 때만 동작한다.");
+
+        string? path = null;
+        if (writeFile.Value)
+        {
+            try
+            {
+                string dir = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog");
+                Directory.CreateDirectory(dir);
+                path = Path.Combine(dir, "battle-log.txt");
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning($"로그 파일 준비 실패, 콘솔로만 남긴다: {e.Message}");
+            }
+        }
+
+        var dumpSet = new HashSet<int>();
+        foreach (string part in hexDump.Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (int.TryParse(part.Trim(), out int op) && Op.Allowed.Contains(op)) dumpSet.Add(op);
+
+        ConfigEntry<bool> rebuildNames = Config.Bind(
+            "Names", "Rebuild", false,
+            "다음 실행에서 names.tsv를 다시 만든다. 게임이 업데이트돼 카드/스킬 이름이 " +
+            "어긋날 때 켠다. 파일을 지워도 같은 효과다.");
+
+        string namesPath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "names.tsv");
+        var names = NameTable.Load(namesPath, Log.LogWarning);
+        if (names.Count > 0) Log.LogInfo($"이름표 {names.Count}개 로드");
+
+        // 이름표가 없으면 게임이 올려둔 설정 에셋에서 직접 만든다. 로비에서는 아직
+        // 안 올라와 있을 수 있어서 프레임 펌프가 몇 초 간격으로 다시 시도한다.
+        NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
+
+        var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
+                                      logPlayerIds.Value, logCards.Value, names);
+        SocketTap.OnFrame = logger.OnFrame;
+
+        if (showOverlay.Value)
+        {
+            if (!Enum.TryParse(overlayKey.Value, ignoreCase: true, out KeyCode toggle))
+            {
+                Log.LogWarning($"ToggleKey '{overlayKey.Value}'를 알 수 없다. F9로 대체한다.");
+                toggle = KeyCode.F9;
+            }
+            LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value, overlayWidth.Value,
+                            toggle, scrollLines.Value);
+            logger.Mirror = LogOverlay.Enqueue;
+            logger.MirrorNewPage = LogOverlay.NewPage;
+            logger.MirrorClear = LogOverlay.RequestClear;
+        }
+
+        // 씬이 바뀌면 화면만 비운다. 로비로 나왔는데 전투 로그가 떠 있으면 방해되니까.
+        //
+        // 여기서 로거 상태(명단·라운드)까지 지우면 안 된다 — 씬 전환은 게임에
+        // *들어갈* 때도 일어나서 방에서 받아둔 명단을 날려버린다. 그건 새 판이
+        // 시작될 때(StartGameS2C) 로거가 스스로 한다.
+        FramePump.OnSceneChanged = LogOverlay.OnSceneChanged;
+
+        try
+        {
+            _harmony = new Harmony(Guid);
+            _harmony.PatchAll(typeof(BeginReceivePatch));
+            _harmony.PatchAll(typeof(EndReceivePatch));
+            // 오버레이를 꺼도 씬 감지는 필요하므로 항상 건다.
+            _harmony.PatchAll(typeof(FramePump));
+            Log.LogInfo("소켓 패치 완료. 전투 로그 수집 대기 중.");
+        }
+        catch (Exception e)
+        {
+            // 패치 실패가 게임을 막으면 안 된다. 로그만 남기고 조용히 비활성화.
+            Log.LogError($"소켓 패치 실패 — 로그 수집이 동작하지 않는다: {e}");
+            SocketTap.OnFrame = null;
+        }
+
+        if (path is not null) Log.LogInfo($"로그 파일: {path}");
+    }
+
+    public override bool Unload()
+    {
+        SocketTap.OnFrame = null;
+        _harmony?.UnpatchSelf();
+        return true;
+    }
+}
