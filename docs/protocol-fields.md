@@ -13,7 +13,7 @@
 
 ```bash
 ilspycmd -p -o <디컴파일루트> ref/AstralParty.Runtime.dll
-python .claude/skills/proto-field-audit/scripts/dump_tags.py <디컴파일루트> HeroHpChangeS2C
+python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 ```
 
 `REPEATED`/`MAP`으로 나오는 필드는 **길이형(wire 2)**이다. 숫자 wire만 받는 루프에서
@@ -44,7 +44,7 @@ python .claude/skills/proto-field-audit/scripts/dump_tags.py <디컴파일루트
 | `SelectRelicS2C`(5212) | 칩 획득의 확정 신호. `!IsReroll && RelicId != 0` (`RelicLogic`) |
 | `HeroHpChangeS2C`(1040 안) | 화면 숫자는 `RealChangeHp`, 실제 HP는 `RealHp`(0이면 `HP + RealChangeHp`) — `BattleProperty.OnLifeChanged` |
 | 〃 | **만피에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
-| `HeroBuffChangeS2C` | 한 메시지가 같은 스킬 출처 버프를 **대상별로 여러 개** 싣고 온다 |
+| `HeroBuffChangeS2C` | 한 메시지에 동일한 스킬·대상 버프가 여러 번 들어올 수 있다. 대상이 다르면 각각 남기고, 같은 `(스킬, 대상)`만 중복 제거한다 |
 
 ## 표
 
