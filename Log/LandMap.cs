@@ -7,26 +7,16 @@ namespace AstralPartyBattleLog.Log;
 /// 맵 칸 번호 → 땅 종류.
 ///
 /// <c>CauseOrigin.Id</c>가 land일 때 그 값은 <b>LandType이 아니라 맵 칸 번호</b>다.
-/// 게임도 <c>LandManager.GetLandById((int)model.Cause.Id)</c>로 칸을 찾는다
-/// (<c>Core/RegisterBoardManager.cs:144</c>, 그리고 <c>SummonShow</c>의 로그 문구
-/// <c>"地图格{model.Cause.Id}"</c> = "맵 칸 {id}").
-///
-/// 이걸 모르고 칸 번호를 LandType으로 조회하면 **틀린 땅 이름이 나온다** — 번호가
-/// 우연히 유효한 LandType 범위(1~27)에 들면 조용히 엉뚱한 이름이 붙는다. 실제로
-/// v1.10까지 그랬다.
-///
-/// 진짜 대응표는 <c>Room.Lands</c>(필드 12, <c>map&lt;int32, BaseLand&gt;</c>)에 있다.
-/// protobuf 맵은 <c>{1: key, 2: value}</c> 메시지의 반복이고,
-/// <c>BaseLand {1: nodeId, 2: landType}</c>이다.
+/// 그대로 LandType으로 조회하면 번호가 우연히 유효 범위(1~27)에 들어 <b>조용히 엉뚱한
+/// 땅 이름이 붙는다.</b> 진짜 대응표는 <c>Room.Lands</c>(필드 12,
+/// <c>map&lt;int32, BaseLand&gt;</c>)에 있다.
 /// </summary>
 internal sealed class LandMap
 {
     private readonly Dictionary<long, long> _typeByNode = new();
 
-
     public void Clear() => _typeByNode.Clear();
 
-    /// <summary>칸 번호에 해당하는 LandType. 모르면 null.</summary>
     public long? TypeOf(long nodeId) =>
         _typeByNode.TryGetValue(nodeId, out long type) ? type : null;
 

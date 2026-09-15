@@ -1,7 +1,7 @@
 namespace AstralPartyBattleLog.Proto;
 
 /// <summary>
-/// 최소 protobuf 워이어 포맷 리더.
+/// 최소 protobuf 와이어 포맷 리더.
 ///
 /// 게임의 protobuf 파서를 쓰지 않고 직접 읽는다. 이유는 성능이 아니라 안전이다 —
 /// 여기에 없는 메시지는 디코딩할 코드가 존재하지 않으므로, 손패 같은 내용을
@@ -53,13 +53,9 @@ internal struct ProtoReader
         return false;
     }
 
-
     /// <summary>
-    /// 숫자 필드 하나를 wire type에 맞게 읽는다.
-    ///
-    /// 이 게임의 .proto는 숫자를 대부분 <c>sfixed32</c>/<c>sfixed64</c>로 선언했고
-    /// (enum만 varint), 그래서 varint만 읽으면 값이 전부 0으로 나온다. 실측으로
-    /// 확인된 사실이라 세 가지를 모두 지원한다.
+    /// 숫자 필드 하나. 이 게임의 .proto는 숫자를 대부분 <c>sfixed32</c>/<c>sfixed64</c>로
+    /// 선언해서(enum만 varint) varint만 읽으면 값이 전부 0으로 나온다.
     /// </summary>
     public bool TryReadNumber(int wireType, out long value)
     {
@@ -90,7 +86,6 @@ internal struct ProtoReader
         return true;
     }
 
-    /// <summary>little-endian 8바이트.</summary>
     public bool TryReadFixed64(out long value)
     {
         value = 0;
@@ -115,7 +110,6 @@ internal struct ProtoReader
         return true;
     }
 
-    /// <summary>UTF-8 문자열 필드.</summary>
     public bool TryReadString(out string value)
     {
         if (TryReadLengthDelimited(out int off, out int len))
@@ -127,7 +121,6 @@ internal struct ProtoReader
         return false;
     }
 
-    /// <summary>중첩 메시지를 읽기 위한 하위 리더.</summary>
     public bool TryReadMessage(out ProtoReader sub)
     {
         if (TryReadLengthDelimited(out int off, out int len))

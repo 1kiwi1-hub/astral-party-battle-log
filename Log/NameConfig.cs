@@ -8,14 +8,13 @@ namespace AstralPartyBattleLog.Log;
 /// <summary>
 /// 설정 에셋(protobuf)에서 이름표 행을 만드는 **순수 로직**. Unity에 의존하지 않는다.
 ///
-/// 에셋을 어디서 구하느냐(<see cref="NameHarvest"/>는 게임 메모리에서, 
+/// 에셋을 어디서 구하느냐(<see cref="NameHarvest"/>는 게임 메모리에서,
 /// <c>tools/extract_names.py</c>는 번들 파일에서)와 분리해 둔 이유는 **오프라인에서
 /// 대조할 수 있게** 하려는 것이다 — 파서가 조용히 틀리면 이름이 전부 사라지는데
 /// 게임을 켜보기 전에는 알 수가 없다.
 /// </summary>
 internal static class NameConfig
 {
-    /// <summary>정보표: (로그 종류, 에셋 이름, 이름 필드 번호, 문자열표 에셋 이름).</summary>
     private static readonly (string Kind, string Info, int NameField, string Strings)[] Tables =
     {
         ("card", "Card", 2, "STRCard"),
@@ -55,7 +54,6 @@ internal static class NameConfig
     /// </summary>
     private static readonly int[] LanguageOrder = { 6, 3, 2 };
 
-
     /// <summary>
     /// 필요한 에셋 이름 전부. 이게 다 모이기 전에는 만들지 않는다 — 덜 모인 채로
     /// 만들면 반쪽짜리 파일이 남고 다시 만들 계기가 없다.
@@ -69,7 +67,6 @@ internal static class NameConfig
         return wanted;
     }
 
-    /// <summary>에셋 묶음 → <c>(종류, id, 이름)</c> 행 목록.</summary>
     public static List<(string Kind, long Id, string Text)> Build(Dictionary<string, byte[]> assets)
     {
         var rows = new List<(string Kind, long Id, string Text)>();
@@ -204,7 +201,7 @@ internal static class NameConfig
         return map;
     }
 
-    /// <summary>바깥 껍데기 <c>{1: repeated Item}</c>를 벗겨 항목을 하나씩 내놓는다.</summary>
+    /// <summary>바깥 껍데기 <c>{1: repeated Item}</c>를 벗긴다.</summary>
     private static IEnumerable<ProtoReader> Items(byte[] data)
     {
         var r = new ProtoReader(data, 0, data.Length);

@@ -48,7 +48,6 @@ internal sealed class FrameReassembler
         _len += count;
     }
 
-    /// <summary>완성된 프레임 하나를 꺼낸다. 더 없으면 false.</summary>
     public bool TryDequeue(out int cmdId, out byte[] body)
     {
         cmdId = 0;

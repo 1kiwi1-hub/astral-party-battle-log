@@ -49,7 +49,6 @@ internal static class SocketTap
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Single(m => m.Name == "EndReceive" && m.GetParameters().Length == 1);
 
-    /// <summary>BeginReceive가 어느 버퍼/오프셋으로 걸렸는지 기록해 둔다.</summary>
     internal static void NoteBeginReceive(IntPtr socket, Il2CppStructArray<byte> buffer, int offset)
     {
         lock (Gate) Outstanding[socket] = new Pending(buffer, offset);
@@ -97,7 +96,6 @@ internal static class SocketTap
             }
         }
     }
-
 }
 
 [HarmonyPatch]

@@ -7,17 +7,15 @@ using UnityEngine.SceneManagement;
 namespace AstralPartyBattleLog.UI;
 
 /// <summary>
-/// 프레임당 한 번 <see cref="LogOverlay.Pump"/>를 돌리고, 씬이 바뀌었는지 본다.
+/// 프레임당 한 번 <see cref="LogOverlay.Pump"/>를 돌리고 씬이 바뀌었는지 본다.
 ///
-/// 이 게임에서는 <c>ClassInjector</c>로 MonoBehaviour를 심을 수 없어서(확정 크래시)
-/// <c>Update</c>를 직접 만들 수 없다. 대신 게임이 이미 매 프레임 부르는 AOT 메서드인
-/// <c>UnityEngine.Time.deltaTime</c> getter에 Postfix를 걸고 <c>frameCount</c>로
-/// 중복을 걷어낸다 — 같은 게임의 AnimSpeed 모드가 쓰는, 실측으로 검증된 방법이다.
+/// MonoBehaviour를 심을 수 없어서(<c>ClassInjector</c> = 확정 크래시) <c>Update</c>를
+/// 만들 수 없다. 대신 게임이 매 프레임 부르는 AOT 메서드 <c>Time.deltaTime</c> getter에
+/// Postfix를 걸고 <c>frameCount</c>로 중복을 걷어낸다 — getter는 한 프레임에 수십 번
+/// 불리므로 본문은 프레임 번호 비교로 끝나야 한다.
 ///
-/// getter는 한 프레임에 수십 번 불리므로 본문은 프레임 번호 비교로 끝나야 한다.
-///
-/// 씬 감지도 여기서 한다. <c>SceneManager.GetActiveScene()</c>은 **호출**이라 안전하다 —
-/// 금지된 건 <c>sceneLoaded += ...</c> 같은 IL2CPP 이벤트 구독이다.
+/// <c>SceneManager.GetActiveScene()</c>은 <b>호출</b>이라 안전하다. 금지된 건
+/// <c>sceneLoaded += ...</c> 같은 IL2CPP 이벤트 구독이다.
 /// </summary>
 [HarmonyPatch]
 internal static class FramePump
@@ -25,10 +23,7 @@ internal static class FramePump
     private static int _lastFrame = -1;
     private static string _scene = "";
 
-    /// <summary>지금 씬 이름. 전투가 벌어지는 씬을 기억해 두는 데 쓴다.</summary>
     public static string CurrentScene => _scene;
-
-    /// <summary>씬이 바뀌었다. 새 씬 이름을 넘긴다.</summary>
     public static Action<string>? OnSceneChanged;
 
     private static MethodBase TargetMethod() =>

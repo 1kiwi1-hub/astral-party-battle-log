@@ -11,52 +11,19 @@ using UnityEngine.ResourceManagement.AsyncOperations;
 namespace AstralPartyBattleLog.Log;
 
 /// <summary>
-/// 게임의 설정 <c>TextAsset</c>을 Addressables로 <b>직접 불러와</b> 이름표를 만든다.
-/// 결과는 <c>names.tsv</c>로 저장하고, 그 자리에서 <see cref="NameTable"/>에도 반영한다.
+/// 게임의 설정 <c>TextAsset</c>을 Addressables로 <b>직접 불러와</b> 이름표를 만들고
+/// <c>names.tsv</c>로 저장한다. 표 구성과 파싱은 <see cref="NameConfig"/>에 모여 있다
+/// (오프라인 대응물 <c>tools/extract_names.py</c>와 한 쌍이다).
 ///
-/// <b>왜 게임 안에서 뽑나</b> — 이 파일은 게임 텍스트와 한글패치 번역문이라 리포에
-/// 커밋해 재배포할 수 없다. 그렇다고 사용자에게 Python + UnityPy를 깔라고 하면
-/// 진입장벽이 너무 크다. 오프라인 대응물은 <c>tools/extract_names.py</c>이고,
-/// <b>표 구성과 파싱은 <see cref="NameConfig"/>에 모여 있다</b> — 한쪽을 고치면
-/// 다른 쪽도 고칠 것.
+/// <b>"이미 로드된 걸 줍는" 방식은 구조적으로 불가능하다</b> — 게임은 설정을 파싱하자마자
+/// <c>Addressables.Release</c>로 놓는데 BepInEx 플러그인은 그보다 한참 뒤에 올라온다.
+/// 그래서 같은 라벨을 우리가 직접 불러 핸들을 쥔다. 이미 캐시에 있어 다운로드는 없다.
 ///
-/// <para><b>왜 "이미 로드된 걸 줍는" 방식이 아닌가 (실측으로 폐기)</b></para>
+/// 지킬 것 둘: <b>콜백에 <c>null</c>을 넘기고</b>(IL2CPP 델리게이트 등록은 확정 크래시라
+/// <c>IsDone</c>을 프레임 펌프에서 폴링한다), <b>다 읽으면 반드시 <c>Release</c>한다</b>
+/// (안 놓으면 설정 번들이 통째로 메모리에 남는다).
 ///
-/// 게임의 <c>StaticConfigure.InitAsync</c>는 이렇게 생겼다:
-/// <code>
-/// AddressableHelper.LoadAssetsAsync&lt;TextAsset&gt;({"GameData_INT"}, OnConfigureLoaded, …)
-/// …
-/// Addressables.Release&lt;IList&lt;TextAsset&gt;&gt;(awaiter.GetResult());   // 파싱하자마자 놓는다
-/// </code>
-///
-/// 처음엔 <c>Resources.FindObjectsOfTypeAll&lt;TextAsset&gt;()</c>로 주워 담으려 했는데
-/// <b>구조적으로 불가능했다.</b> BepInEx 체인로더는 Unity 런타임이 올라온 뒤에야
-/// 플러그인을 로드해서, 우리 첫 스캔이 <b>프레임 2525</b>에 일어난다. 게임의 설정
-/// 로딩은 그 전에 끝나고 해제된 뒤다. 실측 로그:
-/// <code>
-/// Scanning for config assets: 0/16 captured, 4928 TextAssets visible (scan 1, frame 2525).
-/// </code>
-/// TextAsset 4928개가 멀쩡히 보이는데 설정 에셋만 없다 — 스캔 간격을 아무리 좁혀도
-/// 소용없는 이유다.
-///
-/// <para><b>그래서 우리가 직접 부른다</b></para>
-///
-/// 같은 라벨(<c>GameData_INT</c>)로 <c>Addressables.LoadAssetsAsync</c>를 호출한다.
-/// 이미 캐시에 있으므로 다운로드는 없고, <b>핸들을 우리가 쥐고 있는 동안은 해제되지
-/// 않는다</b> — 타이밍 경합이 아예 사라진다.
-///
-/// 두 가지를 지킨다:
-/// <list type="bullet">
-/// <item><b>콜백에 <c>null</c>을 넘긴다.</b> IL2CPP 쪽 델리게이트 등록은 이 게임에서
-///   확정 크래시다. 콜백 없이 핸들만 받고 <c>IsDone</c>을 프레임 펌프에서 폴링하면
-///   델리게이트도 코루틴도 필요 없다.</item>
-/// <item><b>다 읽으면 반드시 <c>Release</c>한다.</b> 안 놓으면 설정 번들이 통째로
-///   메모리에 남는다. 게임이 곧바로 놓는 이유도 그것이다.</item>
-/// </list>
-///
-/// 이 제네릭 인스턴스(<c>LoadAssetsAsync&lt;TextAsset&gt;</c>,
-/// <c>AsyncOperationHandle&lt;IList&lt;TextAsset&gt;&gt;</c>)는 게임 자신이 쓰고 있어서
-/// IL2CPP 메타데이터에 이미 존재한다 — 새 타입을 만드는 게 아니라 있는 걸 부르는 것이다.
+/// 자세한 경위와 실측 로그는 <c>docs/ARCHITECTURE.md</c>.
 /// </summary>
 internal static class NameHarvest
 {
@@ -83,11 +50,8 @@ internal static class NameHarvest
     private const int WarmupFrames = 600;
 
     /// <summary>
-    /// 로드가 이만큼 지나도 안 끝나면 포기한다.
-    ///
-    /// 실측으로는 요청한 그 프레임에 바로 끝났다 (캐시에서 읽으므로 다운로드가 없다).
-    /// 느린 디스크를 넉넉히 감안해도 20초면 충분하고, 그보다 길게 잡으면 실패했을 때
-    /// 사용자가 "되는 건가 마는 건가" 하며 기다리는 시간만 늘어난다.
+    /// 로드가 이만큼 지나도 안 끝나면 포기한다. 캐시에서 읽으므로 보통 요청한 프레임에
+    /// 바로 끝난다 — 느린 디스크를 감안해도 넉넉하다.
     /// </summary>
     private const int TimeoutFrames = 1200;   // 60fps 기준 약 20초
 
@@ -137,11 +101,8 @@ internal static class NameHarvest
     }
 
     /// <summary>
-    /// 로드가 아직 안 끝났다. 시간이 너무 지났으면 포기하고 핸들을 놓는다.
-    ///
-    /// **놓는 게 중요하다.** 쥐고 있으면 설정 번들이 통째로 메모리에 남는다 —
-    /// 게임이 파싱 직후 곧바로 Release하는 이유가 그것이다. 실패한 핸들이 영영
-    /// <c>IsDone</c>이 안 되는 경우에 대비한 안전장치다.
+    /// 시간이 너무 지났으면 포기하고 핸들을 놓는다. 실패한 핸들이 영영 <c>IsDone</c>이
+    /// 안 되는 경우에 대비한 안전장치다.
     /// </summary>
     private static void HandlePending(int frame)
     {
@@ -194,7 +155,7 @@ internal static class NameHarvest
         }
         finally
         {
-            // 안 놓으면 설정 번들이 통째로 메모리에 남는다. 게임도 곧바로 놓는다.
+            // 안 놓으면 설정 번들이 통째로 메모리에 남는다.
             ReleaseHandle();
         }
 

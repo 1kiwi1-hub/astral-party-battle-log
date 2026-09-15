@@ -14,53 +14,41 @@ internal static class Op
     public const int GameRoundChange = 1117;
     public const int MoveAgain = 5044;
 
-    /// <summary>PK 결과. <c>{1: party.model.Battle}</c> — 실측 결과 이게 전투의 본체다.</summary>
+    /// <summary>PK 결과. <c>{1: party.model.Battle}</c></summary>
     public const int Battle = 1007;
 
-    /// <summary>행동 시작 알림. 누구 턴인지 알려준다.</summary>
     public const int ActionStartNotify = 1026;
 
-    /// <summary>진행 중인 게임 상태. <c>{1: party.model.Room}</c> — 여기서 플레이어 명단을 얻는다.</summary>
+    /// <summary>플레이어 명단이 있는 <c>{1: party.model.Room}</c>을 실어 온다.</summary>
     public const int RunningGame = 1003;
-
-    /// <summary>게임 시작. 역시 <c>{1: Room}</c>.</summary>
     public const int StartGame = 5020;
 
-    /// <summary>몹 등장/갱신. <c>{1: party.model.Player}</c> — 몹 명단은 Room이 아니라 여기서 온다.</summary>
+    /// <summary>몹 명단은 Room이 아니라 여기서 온다. <c>{1: party.model.Player}</c></summary>
     public const int MonsterRefresh = 1018;
 
     /// <summary>PK에 카드를 냈다. 공개 전에는 <c>cardId == 0</c>으로 온다.</summary>
     public const int BattleUseCard = 5036;
 
-    /// <summary>보드에서 효과 카드를 썼다. 공개된 행동이다.</summary>
+    /// <summary>보드에서 공개적으로 쓴 효과 카드.</summary>
     public const int UseEffectCard = 5056;
 
-    /// <summary>이동 주사위. <c>{1: repeated vals, 2: movePoint, 3: playerId}</c></summary>
     public const int ThrowDice = 5022;
 
     /// <summary>
-    /// 맵 칸에 놓인 버프 = <b>소환물</b>. 게임도 이걸 <c>GameLogic.SummonLogic</c>이 받아서
-    /// 칸 위의 소환 오브젝트를 만들고 지운다.
-    ///
-    /// <c>{1: repeated LandBuffsWrap {1:nodeId, 2:BuffArray{1: map&lt;int64,Buff&gt;}}}</c>
-    /// 칸 단위로 <b>전체 목록</b>이 온다 — 게임의 <c>UpdateLandBuffs</c>가 목록에 없는
-    /// 기존 소환물을 닫아버리는 걸로 확인했다. 그래서 diff를 떠야 한다.
+    /// 맵 칸에 놓인 버프 = <b>소환물</b>. 칸 단위로 전체 목록이 오므로 diff를 떠야 한다
+    /// (자세한 이유는 <c>BattleLogger.DecodeLandBuffs</c> 주석).
     /// </summary>
     public const int LandBuffs = 1013;
 
     /// <summary>
-    /// 스킬이 이동 중에 일으킨 결과 묶음. <c>{1: playerId, 2: map&lt;int32, {1: repeated
-    /// UpdateHeroAttrS2C}&gt;}</c> — 알맹이가 <c>UpdateHeroAttrS2C</c>라 같은 디코더를 쓴다.
-    /// 이 봉투에 담겨 오는 효과는 1040으로 따로 오지 않아서, 안 풀면 통째로 사라진다.
+    /// 스킬이 이동 중에 일으킨 결과 묶음. 알맹이가 <c>UpdateHeroAttrS2C</c>라 같은
+    /// 디코더를 쓴다 (<c>BattleLogger.DecodeSkillMoveEffect</c> 주석 참고).
     /// </summary>
     public const int HeroSkillMoveEffect = 1096;
 
     /// <summary>
-    /// 본문을 디코딩해도 되는 메시지. 이 집합 밖은 본문을 아예 파싱하지 않는다.
-    ///
-    /// 차단목록이 아니라 허용목록인 게 핵심이다. 카드 내용을 담는 메시지
-    /// (BattleUseCardS2C 5036 등)는 여기 없을 뿐 아니라, 그걸 읽는 디코더 코드가
-    /// 이 프로젝트에 존재하지 않는다.
+    /// 본문을 디코딩해도 되는 메시지. <b>차단목록이 아니라 허용목록이다</b> — 이 집합
+    /// 밖은 본문을 아예 파싱하지 않고, 그걸 읽는 디코더 코드도 존재하지 않는다.
     /// </summary>
     public static readonly HashSet<int> Allowed = new()
     {
@@ -103,14 +91,9 @@ internal static class Op
 }
 
 /// <summary>
-/// <c>party.model.buff_source.Types.source</c> → 표시 이름과 참조할 이름표.
-///
-/// <b><see cref="CauseSource"/>와 번호가 다른 별개의 열거형이다.</b> 이름이 비슷해서
-/// 헷갈리기 쉬운데, 예를 들어 event는 여기선 3이지만 <c>CauseOrigin.source</c>에서도
-/// 3인 건 우연이고 relic은 여기 6, 저기 17이다. 섞어 쓰면 조용히 틀린 이름이 붙는다.
-///
-/// 쓰는 곳: <c>Buff.Source</c>(필드 50). 버프가 어디서 왔는지 서버가 직접 알려주므로,
-/// 이름표에 없는 버프를 <c>buffId / 100</c> 어림짐작으로 추적하던 걸 대체한다.
+/// <c>Buff.Source</c>(필드 50)의 source → 표시 이름과 참조할 이름표.
+/// <b><see cref="CauseSource"/>와 번호가 다른 별개의 열거형이다</b> — relic이 여기 6,
+/// 저기 17이다. 섞어 쓰면 조용히 틀린 이름이 붙는다.
 /// </summary>
 internal static class BuffOrigin
 {
@@ -133,11 +116,8 @@ internal static class BuffOrigin
 }
 
 /// <summary>
-/// party.protocol.CauseOrigin.Types.source → 표시 이름과 참조할 이름표.
-///
-/// 이름표가 <c>null</c>인 종류는 <c>CauseOrigin.Id</c>가 설정 id가 아니라 런타임
-/// 고유값(버프 인스턴스 uid, battleId 등)이다. 그런 숫자는 읽을 수 없으므로
-/// 로그에 찍지 않는다 — 종류 이름만 남긴다.
+/// <c>CauseOrigin.source</c> → 표시 이름과 참조할 이름표. 이름표가 <c>null</c>인 종류는
+/// <c>Id</c>가 설정 id가 아니라 런타임 고유값이라 로그에 찍지 않는다.
 /// </summary>
 internal static class CauseSource
 {
@@ -171,9 +151,9 @@ internal static class CauseSource
 }
 
 /// <summary>
-/// <c>DamageType</c> — HP 변화의 출처. 값 자체는 <c>CauseOrigin.source</c>와 다른 열거형이라
-/// 번호가 안 맞는다(예: DamageType.Event=5, source.event=3). 같은 뜻인 짝을
-/// <see cref="EquivalentCause"/>에 적어두고, 원인 줄과 겹치면 태그를 생략한다.
+/// <c>DamageType</c> — HP 변화의 출처. <c>CauseOrigin.source</c>와 또 다른 열거형이라
+/// 번호가 안 맞는다 (DamageType.Event=5, source.event=3). 같은 뜻인 짝은
+/// <see cref="EquivalentCause"/>에 있다.
 /// </summary>
 internal static class DamageKind
 {

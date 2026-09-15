@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.1")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.2")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
@@ -92,10 +92,9 @@ public class Plugin : BasePlugin
         var names = NameTable.Load(namesPath, Log.LogWarning);
         if (names.Count > 0) Log.LogInfo($"Loaded {names.Count} names.");
 
-        // 이름표가 없으면 게임이 올리는 설정 에셋에서 직접 만든다.
-        //
-        // 게임은 파싱하자마자 Addressables.Release로 놓아버리기 때문에(실측), 켜자마자
-        // 촘촘히 훑어서 살아 있는 동안 잡아야 한다. 프레임 펌프가 그걸 몰아준다.
+        // 이름표가 없으면 게임의 설정 에셋을 Addressables로 직접 불러와 만든다.
+        // 여기서는 준비만 하고, 실제 로드와 완료 폴링은 프레임 펌프가 돌린다
+        // (이유는 NameHarvest 주석 참고).
         NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
 
         var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
