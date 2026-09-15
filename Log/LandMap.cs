@@ -20,7 +20,6 @@ internal sealed class LandMap
     public long? TypeOf(long nodeId) =>
         _typeByNode.TryGetValue(nodeId, out long type) ? type : null;
 
-    /// <summary>Room을 담은 메시지(RunningGameS2C / StartGameS2C)에서 맵을 읽는다.</summary>
     public void Update(byte[] body)
     {
         var outer = new ProtoReader(body, 0, body.Length);
@@ -55,7 +54,6 @@ internal sealed class LandMap
             }
             else if (field == 2 && wire == ProtoReader.WireLength)
             {
-                // BaseLand {1: nodeId, 2: landType}
                 if (!entry.TryReadMessage(out var land)) return;
                 while (land.NextField(out int lf, out int lw))
                 {

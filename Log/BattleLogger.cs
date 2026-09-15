@@ -83,15 +83,6 @@ internal sealed class BattleLogger
     private bool _causeNamesRelic;
 
     /// <summary>
-    /// 이번 <c>UpdateHeroAttr</c>에서 <b>처음 보는</b> 칩 버프가 생겼는지 = 칩을 얻었다.
-    ///
-    /// 원인 종류(<c>RelicCause</c>)만으로는 획득과 발동을 못 가른다 — 이미 가진 칩이
-    /// 그냥 발동할 때도 같은 원인이 붙어서, 효과 줄 없는 빈 머리줄이 쏟아진다
-    /// (실측 한 판에서 63줄).
-    /// </summary>
-    private bool _relicGained;
-
-    /// <summary>
     /// 직전 줄이 이미 발표한 원인. cause가 이것과 같으면 머리줄을 다시 찍지 않는다 —
     /// 같은 사건을 두 번 말하는 셈이라서.
     /// </summary>
@@ -167,6 +158,7 @@ internal sealed class BattleLogger
                 break;
             case Op.BattleUseCard: DecodeBattleUseCard(body); break;
             case Op.UseEffectCard: DecodeUseEffectCard(body); break;
+            case Op.SelectRelic: DecodeSelectRelic(body); break;
             case Op.RoundStart: DecodeRoundStart(body); break;
             case Op.GameRoundChange:
                 _round = (int)ReadNumberField(body, 1);
@@ -185,7 +177,6 @@ internal sealed class BattleLogger
         }
     }
 
-    // ── RoundStartS2C { 1:round, 5:playerId, 6:useCardMaxNum } ──────────────
     private void DecodeRoundStart(byte[] body)
     {
         var r = new ProtoReader(body, 0, body.Length);
@@ -211,7 +202,6 @@ internal sealed class BattleLogger
         _saidAt = DateTime.UtcNow;
     }
 
-    // ── ActionStartNotifyS2C { 1:playerId, 2:isDie, 3:isHospital, 4:isStopRound }
     private void DecodeActionStart(byte[] body)
     {
         var r = new ProtoReader(body, 0, body.Length);
@@ -238,7 +228,6 @@ internal sealed class BattleLogger
         Emit($"· {_roster.Name(pid)} 행동 시작{note}");
     }
 
-    // ── ThrowDiceS2C { 1:repeated vals, 2:movePoint, 3:playerId } ──────────
     private void DecodeThrowDice(byte[] body)
     {
         long movePoint = 0, pid = 0;
@@ -273,7 +262,6 @@ internal sealed class BattleLogger
         Emit(sb.ToString());
     }
 
-    // ── MoveAgainS2C { 1:playerId, 2:movePoint } ──────────────────────────
     private void DecodeMoveAgain(byte[] body)
     {
         long pid = 0, movePoint = 0;
@@ -288,8 +276,7 @@ internal sealed class BattleLogger
         if (movePoint != 0) Emit($"[R{_round}] {_roster.Name(pid)} 추가 이동 {movePoint}칸");
     }
 
-    // ── BattleUseCardS2C { 1:playerId, 2:cardId, 3:noCard } ────────────────
-    //    공개 전에는 cardId가 0으로 오므로 0 이하는 버린다.
+    // 공개 전에는 cardId가 0으로 오므로 0 이하는 버린다.
     private void DecodeBattleUseCard(byte[] body)
     {
         if (!_logCards) return;
@@ -310,8 +297,7 @@ internal sealed class BattleLogger
         if (cardId > 0) Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
     }
 
-    // ── UseEffectCardS2C { 1:playerId, 2:cardId, 3:targetIds, 8:useSkill, 9:skillId }
-    //    UseSkill로 카드와 스킬이 갈린다. cardId만 보고 버리면 스킬 사용이 통째로 사라진다.
+    // UseSkill(8)로 카드와 스킬이 갈린다. cardId만 보고 버리면 스킬 사용이 통째로 사라진다.
     private void DecodeUseEffectCard(byte[] body)
     {
         long pid = 0, cardId = 0, skillId = 0, useSkill = 0;
@@ -357,6 +343,32 @@ internal sealed class BattleLogger
         Said(CardCause, cardId, pid);   // 뒤따르는 UpdateHeroAttr이 머리줄을 생략한다
     }
 
+    // 칩 획득의 **확정 신호**다. 버프에서 추론하면 버프를 안 만드는 칩, uid가 0인
+    //    칩, 획득과 버프가 따로 오는 칩을 놓친다. 게임도 이 메시지에서만
+    //    UpdateSelectedRelic을 부른다 (RelicLogic, `!IsReroll && RelicId != 0`).
+    private void DecodeSelectRelic(byte[] body)
+    {
+        long pid = 0, relicId = 0, reroll = 0;
+        var r = new ProtoReader(body, 0, body.Length);
+        while (r.NextField(out int field, out int wire))
+        {
+            if (!IsNumber(wire)) { if (!r.Skip(wire)) break; continue; }
+            if (!r.TryReadNumber(wire, out long v)) break;
+            switch (field)
+            {
+                case 1: pid = v; break;
+                case 2: relicId = v; break;
+                case 3: reroll = v; break;
+            }
+        }
+        if (reroll != 0 || relicId == 0) return;
+
+        string text = RelicText(relicId);
+        Emit($"[R{_round}] {_roster.Name(pid)} 칩 획득 "
+             + (text.Length > 0 ? text : $"#{relicId}"));
+        Said(RelicCause, relicId, pid);
+    }
+
     private void AppendTargets(StringBuilder sb, List<long> targets)
     {
         if (targets.Count == 0) return;
@@ -368,10 +380,6 @@ internal sealed class BattleLogger
         }
     }
 
-    // ── BattleS2C { 1: party.model.Battle } ────────────────────────────────
-    //    Battle { 1:battleId 2:Attacker 3:Defender 4:cardUseState 5:isEnd
-    //             6:ifNoWinMustDie 7:isPursuit 8:fightBack 9:skillPlayerId }
-    //    필드 4(cardUseState)는 읽지 않는다.
     private void DecodeBattle(byte[] body)
     {
         var outer = new ProtoReader(body, 0, body.Length);
@@ -455,12 +463,8 @@ internal sealed class BattleLogger
         }
     }
 
-    // party.model.BattleRole { 1:playerId 2:atk 3:def 6:point 7:dodge
-    //                          13:heroId 15:chainAttacker 16:chainDamage }
-    //
-    //    필드 6(point)은 이름과 달리 **주사위 값**이고, isEnd 프레임의 atk/def에는 그게
-    //    이미 합산돼 있다 (표시할 때 뺀다 — Role.Format).
-    //    필드 5(useCards)는 값이 카드 uid라 종류를 알 수 없어 읽지 않는다.
+    // 필드 6(Point)은 이름과 달리 **주사위 값**이고, isEnd 프레임의 atk/def에는 그게
+    // 이미 합산돼 있다 (표시할 때 뺀다 — Role.Format).
     private static Role DecodeRole(ProtoReader r)
     {
         long pid = 0, atk = 0, def = 0, point = 0, dodge = 0, heroId = 0, chain = 0, chainDmg = 0;
@@ -483,9 +487,7 @@ internal sealed class BattleLogger
         return new Role(pid, atk, def, point, dodge, heroId, chain, chainDmg);
     }
 
-    // ── UpdateHeroAttrS2C { 1:playerId, 2:CauseOrigin, 4:repeated HeroAttrEffect }
-    //
-    //    byte[]가 아니라 ProtoReader를 받는다 — HeroSkillMoveEffectS2C가 이 메시지를
+    // byte[]가 아니라 ProtoReader를 받는다 — HeroSkillMoveEffectS2C가 이 메시지를
     //    통째로 품고 오기 때문이다 (DecodeSkillMoveEffect 주석 참고).
     private void DecodeUpdateHeroAttr(ProtoReader r)
     {
@@ -495,7 +497,6 @@ internal sealed class BattleLogger
         _goldSeen = null;
         _goldSeenMany = false;
         _causeNamesRelic = false;
-        _relicGained = false;
 
         while (r.NextField(out int field, out int wire))
         {
@@ -518,9 +519,9 @@ internal sealed class BattleLogger
             }
         }
 
-        // 칩 획득은 머리줄 자체가 사건이라 능력치 변화가 없어도 남긴다. 반대로 이미
-        // 가진 칩이 그냥 발동한 것은 효과 줄이 없으면 아무 정보가 없으므로 버린다.
-        if (lines.Count == 0 && !_relicGained) return;
+        // 보여줄 게 없으면 머리줄만 남는다. 칩 획득은 SelectRelicS2C가 따로 말하므로
+        // 여기서 빈 머리줄을 살려둘 이유가 없다.
+        if (lines.Count == 0) return;
 
         // 직전 줄이 같은 원인을 말했으면 머리줄을 건너뛴다. **주체까지 같아야 한다** —
         // 칩 선택은 여러 명이 같은 칩 id로 몰려 와서 남의 머리줄을 지운다.
@@ -530,12 +531,9 @@ internal sealed class BattleLogger
                            && (causeSource == BattleCause || (causeId == _saidId && who == _saidActor))
                            && DateTime.UtcNow - _saidAt < SaidWindow;
 
-        // 칩 획득은 "칩이 원인인 무언가"와 모양이 같으면 구별이 안 되므로 동사를 붙인다.
-        string header = _relicGained
-            ? $"[R{_round}] {_roster.Name(who)} 칩 획득 {RelicText(causeId)}"
-            : cause.Length > 0
-                ? $"[R{_round}] {_roster.Name(who)} ({cause})"
-                : $"[R{_round}] {_roster.Name(who)}";
+        string header = cause.Length > 0
+            ? $"[R{_round}] {_roster.Name(who)} ({cause})"
+            : $"[R{_round}] {_roster.Name(who)}";
 
         // 골드 한 건만 있는 독립 메시지면 송금의 한쪽일 수 있다. 짝을 맞춰본다.
         if (!alreadySaid && lines.Count == 1 && _goldSeen is { } gold)
@@ -599,9 +597,7 @@ internal sealed class BattleLogger
         EmitLine("        " + held.Line);
     }
 
-    // ── HeroSkillMoveEffectS2C { 1:playerId, 2:map<int32, {1: repeated UpdateHeroAttrS2C}> }
-    //
-    //    이동 도중 발동한 결과 봉투. 알맹이가 UpdateHeroAttrS2C라 같은 디코더를 쓴다
+    // 이동 도중 발동한 결과 봉투. 알맹이가 UpdateHeroAttrS2C라 같은 디코더를 쓴다
     //    (손패를 읽지 않는 성질도 따라온다). 안 풀면 1040으로 따로 오지 않아 통째로 빠진다.
     private void DecodeSkillMoveEffect(byte[] body)
     {
@@ -629,10 +625,7 @@ internal sealed class BattleLogger
         }
     }
 
-    // ── LandBuffsS2C { 1: repeated LandBuffsWrap {1:nodeId, 2:BuffArray} } ──
-    //    BuffArray { 1: map<int64, Buff> }   (맵 항목은 {1:key, 2:value})
-    //
-    //    칸 위에 놓인 버프 = 소환물. 칸 단위로 **전체 목록**이 오므로 새로 생긴 것을
+    // 칸 위에 놓인 버프 = 소환물. 칸 단위로 **전체 목록**이 오므로 새로 생긴 것을
     //    알려면 diff를 뜨는 수밖에 없다. 소환물 하나하나는 적지 않는다 — 스킬 한 번에
     //    여섯 칸이 깔리고 id가 이름표에 없어 숫자만 남는다. "스킬을 썼다" 한 줄이면 된다.
     private void DecodeLandBuffs(byte[] body)
@@ -738,7 +731,6 @@ internal sealed class BattleLogger
     private const long RelicCause = 17;
     private const long BattleCause = 12;
 
-    // CauseOrigin { 1:source s (varint enum), 3:id }
     private (string Text, long Source, long Id) DecodeCause(ProtoReader r)
     {
         long s = 0, id = 0;
@@ -778,13 +770,11 @@ internal sealed class BattleLogger
         return (id != 0 ? $"{label} #{id}" : label, s, id);
     }
 
-    /// <summary>등급 색을 입힌 칩 이름. 이름표에 없으면 빈 문자열.</summary>
     private string RelicText(long id) =>
         _names.Lookup("relic", id) is { } name
             ? Palette.Relic($"\"{name}\"", _names.Lookup("relicgrade", id))
             : "";
 
-    // HeroAttrEffect { 1:playerId, oneof { 2:Gold, 3:Hp, 4:Atk, 5:Def, 6:Buff, 15:CureNum, 21:CounterNum, ... } }
     private void DecodeEffect(ProtoReader r, List<string> lines, long causeSource)
     {
         long target = 0;
@@ -816,8 +806,7 @@ internal sealed class BattleLogger
         }
     }
 
-    // HeroGoldChangeS2C { 1:playerId 2:changeGold 3:oriGold 4:currGold }
-    //    송금에 "누가 누구한테"는 없다. 짝 맞추기는 TryMergeGold가 한다.
+    // 송금에 "누가 누구한테"는 없다. 짝 맞추기는 TryMergeGold가 한다.
     private string DecodeGold(ProtoReader r, long fallbackTarget)
     {
         long pid = fallbackTarget, change = 0, ori = 0, curr = 0;
@@ -845,11 +834,15 @@ internal sealed class BattleLogger
         $"{_roster.Name(pid)} {Palette.Gold($"골드 {ori}→{curr}")}"
         + $"  {Palette.Delta($"{change:+0;-0}", change < 0)}";
 
-    // HeroHpChangeS2C { 1:playerId 2:changeHp 3:oriHp 4:currHp 5:realChangeHp
-    //                   6:realHp 7:maxHp 8:damageType 9:killer }
+    // **증감은 ChangeHp가 아니라 RealChangeHp다.** 게임도 화면에 띄우는 숫자로
+    //    RealChangeHp를 쓰고(BattleProperty.OnLifeChanged가 attrChange로
+    //    (OriHp, CurrHp, RealChangeHp)를 넘긴다), 실제 HP도
+    //    `RealHp != 0 ? RealHp : HP + RealChangeHp`로 잡는다. ChangeHp는 의도한 값이라
+    //    막히거나 넘치면 실제와 다르다 — 만피에서 회복을 받으면 ChangeHp만 +2로 온다.
     private string DecodeHp(ProtoReader r, long fallbackTarget, long causeSource)
     {
         long pid = fallbackTarget, change = 0, ori = 0, curr = 0, max = 0, kind = 0, killer = 0;
+        long real = 0, realHp = 0;
         while (r.NextField(out int field, out int wire))
         {
             if (!IsNumber(wire)) { if (!r.Skip(wire)) break; continue; }
@@ -860,20 +853,30 @@ internal sealed class BattleLogger
                 case 2: change = v; break;
                 case 3: ori = v; break;
                 case 4: curr = v; break;
+                case 5: real = v; break;
+                case 6: realHp = v; break;
                 case 7: max = v; break;
                 case 8: kind = v; break;
                 case 9: killer = v; break;
             }
         }
 
-        // HP가 그대로인데 증감만 실려 오는 경우가 많다 — 만피에서 회복을 받으면
-        // `HP 10→10/10  +2`처럼 일어나지 않은 변화를 말하게 된다.
-        //
-        // 음수는 남긴다. 피해를 입었는데 HP가 그대로면 막아냈다는 뜻이라 사건이다.
-        if (ori == curr && change >= 0) return "";
+        // 전후가 같고 실제 증감도 0이면 아무 일도 없었다.
+        if (ori == curr && real == 0) return "";
+
+        // 서버가 RealChangeHp를 안 실어 보냈는데 HP는 움직인 경우가 있을 수 있다.
+        // 그땐 전후 차이가 유일한 사실이다.
+        long delta = real != 0 ? real : curr - ori;
+
+        // ChangeHp와 어긋나는 사례, RealHp와 CurrHp가 어긋나는 사례를 모으기 위한
+        // 진단. 어느 쪽을 보여줄지 정하려면 실측 표본이 필요하다.
+        if (_traceUnknown && (change != real || (realHp != 0 && realHp != curr)))
+            Diag($"hp pid={pid} ori={ori} curr={curr} change={change} "
+                 + $"real={real} realHp={realHp} max={max}");
+
         var sb = new StringBuilder($"{_roster.Name(pid)} HP {ori}→{curr}");
         if (max > 0) sb.Append($"/{max}");
-        sb.Append($"  {Palette.Delta($"{change:+0;-0}", change < 0)}");
+        sb.Append($"  {Palette.Delta($"{delta:+0;-0}", delta < 0)}");
         bool sameAsCause = kind == 0 || Array.IndexOf(DamageKind.EquivalentCause(kind), causeSource) >= 0;
         if (!sameAsCause) sb.Append($" [{DamageKind.Name(kind)}]");
         // 가해자가 이 덩어리의 주체면 이미 윗줄이 말했다.
@@ -882,7 +885,6 @@ internal sealed class BattleLogger
         return sb.ToString();
     }
 
-    // Hero{Atk,Def}ChangeS2C { 1:playerId, 5:currAtk|currDef }
     private string DecodeStat(ProtoReader r, long fallbackTarget, int valueField, bool attack)
     {
         long pid = fallbackTarget, curr = 0;
@@ -897,8 +899,7 @@ internal sealed class BattleLogger
         return $"{_roster.Name(pid)} {tinted}";
     }
 
-    // HeroBuffChangeS2C { 1:playerId, 2:Buff, 3:op, 4:map<int64, Buff> }
-    //    하나면 필드 2, 여러 개면 필드 4. 필드 2만 읽으면 이름이 안 붙는다.
+    // 버프가 하나면 필드 2, 여러 개면 필드 4(map)로 온다. 필드 2만 읽으면 이름이 안 붙는다.
     private void DecodeBuff(ProtoReader r, long fallbackTarget, long causeSource, List<string> lines)
     {
         long pid = fallbackTarget, op = 0;
@@ -952,9 +953,6 @@ internal sealed class BattleLogger
         // 보면 이미 가진 칩이 발동한 것과 구별되지 않는다.
         if (causeSource == RelicCause && _causeNamesRelic)
         {
-            if (IsNewBuff(single)) _relicGained = true;
-            foreach (var b0 in list) if (IsNewBuff(b0)) _relicGained = true;
-
             Remember(pid, single);
             foreach (var b0 in list) Remember(pid, b0);
             return;
@@ -990,12 +988,29 @@ internal sealed class BattleLogger
         if (info is { } b && b.Uid != 0 && b.Id != 0) _buffs[b.Uid] = (pid, b);
     }
 
-    private bool IsNewBuff(BuffInfo? info) =>
-        info is { } b && b.Uid != 0 && b.Id != 0 && !_buffs.ContainsKey(b.Uid);
+    /// <summary>
+    /// 액티브 사용이 낳은 메아리 버프를 가려내는 시간 창.
+    ///
+    /// <b>이건 휴리스틱이다.</b> 버프 메시지의 대상은 시전자가 아니고, 시전자는 선에
+    /// 실려 오지 않는다 — 그래서 "같은 스킬"까지만 대조할 수 있다. 다른 사람이 같은
+    /// 스킬을 이 안에 독립적으로 발동하면 그 줄이 사라진다.
+    ///
+    /// 실측에서 메아리는 <b>모두 1ms 안</b>에 왔다(11건). 그래서 250ms면 놓칠 일이
+    /// 없으면서 남의 발동을 삼킬 여지는 거의 없다. <see cref="SaidWindow"/>(2초)를
+    /// 그대로 쓰면 다음 턴 남의 발동까지 삼킨다.
+    /// </summary>
+    private static readonly TimeSpan SkillEchoWindow = TimeSpan.FromMilliseconds(250);
 
-    /// <summary>방금 이 스킬을 <c>스킬 사용</c>으로 발표했는가.</summary>
     private bool AlreadySaidSkill(long skillId) =>
         _saidSource == SkillCause && _saidId == skillId
+        && DateTime.UtcNow - _saidAt < SkillEchoWindow;
+
+    /// <summary>
+    /// <c>SelectRelicS2C</c>가 방금 이 칩 획득을 말했는가. 같은 칩을 두 사람이 같은
+    /// 밀리초에 고를 수 있어 <b>주체까지</b> 대조한다.
+    /// </summary>
+    private bool AlreadySaidRelic(long relicId, long pid) =>
+        _saidSource == RelicCause && _saidId == relicId && _saidActor == pid
         && DateTime.UtcNow - _saidAt < SaidWindow;
 
     /// <summary>
@@ -1010,6 +1025,10 @@ internal sealed class BattleLogger
             // 달라진 값은 바로 옆의 ATK/DEF 줄이 보여준다. 라운드마다 갱신만 오는
             // 칩도 있어서(실측: `8면체 주사위` 한 판에 15줄) 숫자 없는 줄만 쌓인다.
             if (kind == BuffEvent.Update) return "";
+
+            // 획득은 SelectRelicS2C가 확정한다. 이 줄은 그게 안 오는 경로
+            // (체크포인트 등)를 위한 보조라, 방금 말했으면 생략한다.
+            if (kind == BuffEvent.Gain && AlreadySaidRelic(b.SourceId, pid)) return "";
 
             string verb = kind == BuffEvent.Gain ? "칩 획득" : "칩 잃음";
             string? chip = _names.Lookup("relic", b.SourceId);
@@ -1099,8 +1118,6 @@ internal sealed class BattleLogger
         public BuffInfo WithUid(long uid) => new(uid, Id, KeepRound, SourceKind, SourceId);
     }
 
-    // Buff { 1:uniqueId, 2:buffId, 5:keepRound, 50:buff_source }
-    // buff_source { 1:s(varint enum), 2:id }
     private static BuffInfo ReadBuff(ProtoReader buff)
     {
         long uid = 0, id = 0, keep = 0, srcKind = 0, srcId = 0;
@@ -1130,7 +1147,6 @@ internal sealed class BattleLogger
         return new BuffInfo(uid, id, keep, srcKind, srcId);
     }
 
-    // Hero{Cure,Counter}NumChangeS2C { 1:playerId 2:changeNum 3:oriNum 4:currNum }
     private string DecodeNum(ProtoReader r, long fallbackTarget, string label)
     {
         long pid = fallbackTarget, change = 0, ori = 0, curr = 0;

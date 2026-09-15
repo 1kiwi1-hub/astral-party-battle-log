@@ -489,6 +489,61 @@ python tools/extract_names.py gamedata names.tsv
   - 머리줄이 이미 딴 데 딸려 있으면(`alreadySaid`) 합치지 않는다. 그 덩어리에서
     줄 하나만 빼내 위로 올리면 문맥이 끊긴다.
 
+## 칩 획득은 SelectRelicS2C가 확정한다 (v0.1.3)
+
+**버프에서 추론하면 안 된다.** 한때 "처음 보는 칩 버프가 생겼는가"로 획득을 가렸는데,
+그러면 버프를 안 만드는 칩·uid가 0인 칩·획득과 버프가 따로 오는 칩을 놓친다.
+
+게임은 `SelectRelicS2C`(5212)에서만 `UpdateSelectedRelic`을 부른다
+(`GameLogic/RelicLogic.OnSelectRelicS2CServerCallBack`):
+
+```csharp
+if (... && errid == 0 && !model.IsReroll)
+{
+    if (model.RelicId != 0)
+        GetPlayerDataById(model.PlayerId).UpdateSelectedRelic(model.RelicId);
+}
+```
+
+그래서 **획득 조건은 `!IsReroll && RelicId != 0`**이고, 이 메시지가 유일한 확정
+신호다. `BuffLine`의 `칩 획득`은 이게 안 오는 경로(체크포인트 등)를 위한 보조로만
+남기고, 방금 5212가 말했으면 생략한다.
+
+`UpdateHeroAttr`의 relic 원인은 획득과 발동을 구별하지 못하므로
+(이미 가진 칩이 발동할 때도 같은 원인이 붙는다) 효과 줄이 없으면 그냥 버린다.
+
+## HP 증감은 RealChangeHp다 (v0.1.3)
+
+`HeroHpChangeS2C`에는 `ChangeHp`(2)와 `RealChangeHp`(5)가 따로 있다. **화면에 뜨는
+숫자는 RealChangeHp**이고, 실제 HP도 그걸로 잡는다 — `Core.Unit/BattleProperty.OnLifeChanged`:
+
+```csharp
+curHp = (HpChange.RealHp == 0) ? (HP.Value + HpChange.RealChangeHp) : HpChange.RealHp;
+if (_characterInst != null && (HpChange.RealChangeHp != 0 || !isFight))
+    _characterInst.signal.attrChange.Dispatch((HpChange.OriHp, HpChange.CurrHp, HpChange.RealChangeHp, 5), "");
+```
+
+`ChangeHp`는 **의도한** 값이라 막히거나 넘치면 실제와 다르다 — 만피에서 회복을 받으면
+`ChangeHp`만 +2로 오고 `HP 10→10/10 +2` 같은 헛줄이 된다(실측 10줄).
+게임도 전투 중에는 `RealChangeHp == 0`이면 팝업을 띄우지 않는다.
+
+`ChangeHp != RealChangeHp`인 사례와 `RealHp != CurrHp`인 사례는 아직 표본이 없다.
+`TraceFrames`를 켜면 그 두 경우에 `hp pid=... change=... real=... realHp=...` 진단이
+남으므로, 표본을 모은 뒤 "시도된 피해"를 따로 보여줄지 결정할 것.
+
+## 스킬 메아리 억제는 휴리스틱이다 (v0.1.3)
+
+액티브 스킬은 `스킬 사용` 줄을 낸 뒤 **같은 스킬의 버프**를 또 만든다. 그래서
+`스킬 발동` 줄이 겹친다(실측 20줄 중 11줄).
+
+억제는 **같은 스킬 id + 250ms 안**으로만 한다. 버프 메시지의 대상은 시전자가 아니고
+시전자는 선에 실려 오지 않으므로 주체를 대조할 수가 없다 — **다른 사람이 같은 스킬을
+그 안에 독립적으로 발동하면 그 줄이 사라진다.** 실측에서 메아리는 전부 1ms 안에 왔고,
+`SaidWindow`(2초)를 그대로 쓰면 다음 턴 남의 발동까지 삼킨다.
+
+`스킬 발동` 줄의 이름은 **시전자가 아니라 버프 대상**이다. 주어 자리에 놓지 말고
+`스킬 발동 "허약의 표식" → 마법 찻주전자1`로 대상임을 드러낼 것.
+
 ## 칩·스킬 줄에서 걷어낸 것 (v0.1.2)
 
 실측 한 판(1155줄)에서 잡음 89줄의 원인을 잡았다.
@@ -498,9 +553,7 @@ python tools/extract_names.py gamedata names.tsv
   칩 획득을 살리자"고 둔 예외(`lines.Count == 0 && cause != relic`이면 return)가 효과 줄
   없는 빈 머리줄을 통과시켰다 — **한 판에 63줄**, 그중 24줄이 `손전등 - 강력` 하나다.
 
-  판별 기준은 **`_buffs`에 없는 칩 버프가 새로 생겼는가**(`_relicGained`)다. 획득이면
-  머리줄에 동사를 붙여 `보니 칩 획득 "휴대용 선풍기 - 소형"`으로 쓰고, 단순 발동인데
-  효과 줄이 없으면 버린다.
+  (v0.1.3에서 판별을 `SelectRelicS2C`로 옮겼다 — 위 절 참고. 효과 줄이 없으면 버린다.)
 - **원인이 칩 이름을 안 알려주면(`id == 0`) 버프 줄을 버리지 않는다.** 그땐 `Buff.Source`가
   유일한 단서다. 이름 없는 `(칩)` 머리줄이 12개 있었다.
 - **`칩 갱신`은 아예 쓰지 않는다.** 사용자에게 사건이 아니고(이미 가진 칩이다), 달라진
@@ -514,9 +567,8 @@ python tools/extract_names.py gamedata names.tsv
   나왔다 — 44줄 중 **22줄**이 몹을 주어로 달고 있었다. 누가 걸었는지는 선에 실려 오지
   않으므로(`Buff.Source`는 어느 스킬인지까지만 준다) 주어를 만들지 말고
   `스킬 발동 "허약의 표식" → 마법 찻주전자1`로 대상임을 드러낼 것.
-- **HP가 그대로인데 증감만 오는 알림을 버린다.** 만피에서 회복을 받으면
-  `HP 10→10/10  +2`처럼 일어나지 않은 변화를 말한다. 단 **음수는 남긴다** — 피해를
-  입었는데 HP가 그대로면 막아냈다는 뜻이라 사건이다.
+- **HP가 그대로인데 증감만 오는 알림을 버린다.** (v0.1.3에서 판정을 `RealChangeHp`로
+  바꿨다 — 위 절 참고.)
 
 ## 같은 사건을 두 번 말하지 않는다 (v1.8.0)
 

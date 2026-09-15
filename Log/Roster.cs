@@ -69,8 +69,6 @@ internal sealed class Roster
             ? $"{e.Kind}{e.Ordinal}"
             : e.Kind;
 
-    /// <summary>Room을 담은 메시지(RunningGameS2C / StartGameS2C)에서 명단을 갱신한다.</summary>
-    /// <returns>새로 알게 된 이름이 있으면 true.</returns>
     public bool Update(byte[] body)
     {
         var outer = new ProtoReader(body, 0, body.Length);

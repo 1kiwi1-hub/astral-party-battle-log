@@ -32,6 +32,13 @@ internal static class Op
     /// <summary>보드에서 공개적으로 쓴 효과 카드.</summary>
     public const int UseEffectCard = 5056;
 
+    /// <summary>
+    /// 칩을 골랐다. <b>획득은 이 메시지가 확정한다</b> — 게임도
+    /// <c>RelicLogic.OnSelectRelicS2CServerCallBack</c>에서 <c>!IsReroll &amp;&amp; RelicId != 0</c>일 때만
+    /// <c>UpdateSelectedRelic</c>을 부른다. 버프를 안 만드는 칩도 이 메시지는 온다.
+    /// </summary>
+    public const int SelectRelic = 5212;
+
     public const int ThrowDice = 5022;
 
     /// <summary>
@@ -63,6 +70,7 @@ internal static class Op
         MonsterRefresh,
         BattleUseCard,
         UseEffectCard,
+        SelectRelic,
         ThrowDice,
         MoveAgain,
         LandBuffs,
@@ -83,6 +91,7 @@ internal static class Op
         MonsterRefresh => "MonsterRefresh",
         BattleUseCard => "BattleUseCard",
         UseEffectCard => "UseEffectCard",
+        SelectRelic => "SelectRelic",
         ThrowDice => "ThrowDice",
         MoveAgain => "MoveAgain",
         LandBuffs => "LandBuffs",

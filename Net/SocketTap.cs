@@ -34,7 +34,7 @@ internal static class SocketTap
     private static readonly Dictionary<IntPtr, Pending> Outstanding = new();
     private static readonly Dictionary<IntPtr, FrameReassembler> Streams = new();
 
-    /// <summary>완성된 프레임 하나가 나올 때마다 호출된다. (소켓 IO 스레드)</summary>
+    /// <summary>소켓 IO 스레드에서 불린다.</summary>
     public static Action<int, byte[]>? OnFrame;
 
     internal static MethodBase FindBeginReceive() =>

@@ -27,7 +27,6 @@ internal struct ProtoReader
 
     public bool HasMore => _pos < _end;
 
-    /// <summary>다음 태그를 읽는다. 스트림이 끝났거나 손상되면 false.</summary>
     public bool NextField(out int fieldNumber, out int wireType)
     {
         fieldNumber = 0;

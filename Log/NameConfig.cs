@@ -107,7 +107,6 @@ internal static class NameConfig
     // 정보표는 전부 `{1: repeated XxxInfoConfigure}` 꼴이고 항목의 id는 필드 1이다
     // (Land만 id 필드 이름이 LandType이지만 번호는 똑같이 1).
 
-    /// <summary><c>{1: repeated {1:Id, nameField:NameId}}</c> → <c>{id: nameId}</c>.</summary>
     private static Dictionary<long, long> ParseInfo(byte[] data, int nameField)
     {
         var map = new Dictionary<long, long>();
@@ -201,7 +200,6 @@ internal static class NameConfig
         return map;
     }
 
-    /// <summary>바깥 껍데기 <c>{1: repeated Item}</c>를 벗긴다.</summary>
     private static IEnumerable<ProtoReader> Items(byte[] data)
     {
         var r = new ProtoReader(data, 0, data.Length);
