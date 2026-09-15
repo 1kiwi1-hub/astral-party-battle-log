@@ -77,10 +77,19 @@ internal sealed class BattleLogger
     private bool _goldSeenMany;
 
     /// <summary>
-    /// 이번 <c>UpdateHeroAttr</c>에서 이미 찍은 (스킬, 대상). 한 메시지가 같은 스킬
-    /// 버프를 여러 개 싣고 오기 때문에 대상별로 한 번만 남긴다.
+    /// 이번 <c>UpdateHeroAttr</c>에서 이미 찍은 <b>(스킬, 대상)</b> 짝. 한 메시지가 같은
+    /// 스킬 버프를 대상별로 여러 개 싣고 오는데, 같은 대상이 두 번 들어오기도 한다
+    /// (실측: `스킬 발동 "훔치기" → ?43838`이 한 덩어리에 두 줄).
+    /// 대상이 다르면 각각 남긴다.
     /// </summary>
     private readonly HashSet<(long SkillId, long Pid)> _skillFired = new();
+
+    /// <summary>
+    /// 머리줄 자리로 끌어올릴 스킬 줄. 원인이 스킬인데 본문도 같은 스킬을 말하면
+    /// 둘이 같은 사건이라, <b>본문을 살리고 머리줄을 버린다</b> — 본문에는 대상이 있고
+    /// 머리줄에는 없다. 반대로 본문을 버리면 효과 줄이 없을 때 사건이 통째로 사라진다.
+    /// </summary>
+    private string? _causeSkillLine;
 
     /// <summary>
     /// 이번 행동에서 이미 찍은 (플레이어, 카드 uid). <b>한 PK에 카드를 여러 장 낼 수
@@ -311,6 +320,10 @@ internal sealed class BattleLogger
                 case 3: noCard = v; break;
             }
         }
+        // 카드 uid는 전투 로그에 넣지 않는다(종류를 알 수 없는 런타임 값이다).
+        // 반복 방송인지 다른 카드인지 가리려면 uid가 필요하므로 진단으로만 남긴다.
+        if (_traceUnknown) Diag($"battle-card pid={pid} cardUid={cardId} noCard={noCard}");
+
         if (noCard != 0) { Emit($"[R{_round}] {_roster.Name(pid)} 카드 안 냄"); return; }
         if (cardId > 0 && _cardSubmits.Add((pid, cardId)))
             Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
@@ -351,6 +364,8 @@ internal sealed class BattleLogger
             AppendTargets(skill, targets);
             Emit(skill.ToString());
             _saidSkillUse = pid;   // LandBuffs 추측이 같은 말을 반복하지 않게
+            _activeSkillId = skillId;
+            _activeSkillAt = DateTime.UtcNow;
             Said(SkillCause, skillId, pid);
             return;
         }
@@ -517,6 +532,7 @@ internal sealed class BattleLogger
         _goldSeenMany = false;
         _causeNamesRelic = false;
         _skillFired.Clear();
+        _causeSkillLine = null;
 
         while (r.NextField(out int field, out int wire))
         {
@@ -541,7 +557,9 @@ internal sealed class BattleLogger
 
         // 보여줄 게 없으면 머리줄만 남는다. 칩 획득은 SelectRelicS2C가 따로 말하므로
         // 여기서 빈 머리줄을 살려둘 이유가 없다.
-        if (lines.Count == 0) return;
+        //
+        // 스킬 줄은 예외다 — 그게 사건 자체라 효과 줄이 없어도 남겨야 한다.
+        if (lines.Count == 0 && _causeSkillLine is null) return;
 
         // 직전 줄이 같은 원인을 말했으면 머리줄을 건너뛴다. **주체까지 같아야 한다** —
         // 칩 선택은 여러 명이 같은 칩 id로 몰려 와서 남의 머리줄을 지운다.
@@ -551,9 +569,19 @@ internal sealed class BattleLogger
                            && (causeSource == BattleCause || (causeId == _saidId && who == _saidActor))
                            && DateTime.UtcNow - _saidAt < SaidWindow;
 
-        string header = cause.Length > 0
-            ? $"[R{_round}] {_roster.Name(who)} ({cause})"
-            : $"[R{_round}] {_roster.Name(who)}";
+        string header;
+        if (_causeSkillLine is { } skillLine)
+        {
+            lines.Remove(skillLine);
+            header = $"[R{_round}] {skillLine}";
+            alreadySaid = false;   // 사건 자체다. 문맥 때문에 지우면 안 된다
+        }
+        else
+        {
+            header = cause.Length > 0
+                ? $"[R{_round}] {_roster.Name(who)} ({cause})"
+                : $"[R{_round}] {_roster.Name(who)}";
+        }
 
         // 골드 한 건만 있는 독립 메시지면 송금의 한쪽일 수 있다. 짝을 맞춰본다.
         if (!alreadySaid && lines.Count == 1 && _goldSeen is { } gold)
@@ -855,10 +883,11 @@ internal sealed class BattleLogger
         + $"  {Palette.Delta($"{change:+0;-0}", change < 0)}";
 
     // **증감은 ChangeHp가 아니라 RealChangeHp다.** 게임도 화면에 띄우는 숫자로
-    //    RealChangeHp를 쓰고(BattleProperty.OnLifeChanged가 attrChange로
-    //    (OriHp, CurrHp, RealChangeHp)를 넘긴다), 실제 HP도
-    //    `RealHp != 0 ? RealHp : HP + RealChangeHp`로 잡는다. ChangeHp는 의도한 값이라
-    //    막히거나 넘치면 실제와 다르다 — 만피에서 회복을 받으면 ChangeHp만 +2로 온다.
+    // RealChangeHp를 쓰고, 실제 HP는 `RealHp != 0 ? RealHp : HP + RealChangeHp`로 잡는다
+    // (BattleProperty.OnLifeChanged).
+    //
+    // **미확정:** 화면의 최종 HP가 CurrHp인지 RealHp인지 아직 표본이 없다. 지금은
+    // 전후를 CurrHp/OriHp로 찍는다. TraceFrames를 켜면 `hp filtered=...` 진단이 남는다.
     private string DecodeHp(ProtoReader r, long fallbackTarget, long causeSource)
     {
         long pid = fallbackTarget, change = 0, ori = 0, curr = 0, max = 0, kind = 0, killer = 0;
@@ -883,21 +912,26 @@ internal sealed class BattleLogger
 
         // 전후가 같으면 화면에 보이는 HP는 그대로다.
         //
-        // **만피에서 회복을 받으면 RealChangeHp도 +2로 온다** (실측 10건, 전부
-        // `curr == max`). 그래서 `real == 0`만으로는 안 걸러진다 — 넘친 회복은 버린다.
-        // 그 밖에 전후가 같은데 증감이 실려 오는 경우는 아직 정체를 모르므로 남긴다.
-        if (ori == curr && real == 0) return "";
-        if (ori == curr && real > 0 && max > 0 && curr >= max) return "";
+        // **만피에서 회복을 받아도 RealChangeHp가 0이 아니다** — 실측 10건이 전부
+        // `curr == max`에서 `real`이 +2/+3이었다. 그래서 `real == 0`만으로는 안 걸러진다.
+        // 넘친 회복은 버리고, 전후가 같은 그 밖의 경우는 정체를 몰라 남긴다(미확정).
+        string filtered = ori != curr ? ""
+            : real == 0 ? "no-change"
+            : real > 0 && max > 0 && curr >= max ? "max-heal"
+            : "";
+
+        // **진단은 필터보다 먼저 남긴다.** 걸러낸 메시지야말로 원본 값을 봐야 한다.
+        if (_traceUnknown && (filtered.Length > 0 || ori == curr || change != real
+                              || (realHp != 0 && realHp != curr)))
+            Diag($"hp filtered={(filtered.Length > 0 ? filtered : "no")} pid={pid} "
+                 + $"ori={ori} curr={curr} change={change} real={real} realHp={realHp} "
+                 + $"max={max} dmg={kind} killer={killer}");
+
+        if (filtered.Length > 0) return "";
 
         // 서버가 RealChangeHp를 안 실어 보냈는데 HP는 움직인 경우가 있을 수 있다.
         // 그땐 전후 차이가 유일한 사실이다.
         long delta = real != 0 ? real : curr - ori;
-
-        // ChangeHp와 어긋나는 사례, RealHp와 CurrHp가 어긋나는 사례를 모으기 위한
-        // 진단. 어느 쪽을 보여줄지 정하려면 실측 표본이 필요하다.
-        if (_traceUnknown && (change != real || ori == curr || (realHp != 0 && realHp != curr)))
-            Diag($"hp pid={pid} ori={ori} curr={curr} change={change} "
-                 + $"real={real} realHp={realHp} max={max}");
 
         var sb = new StringBuilder($"{_roster.Name(pid)} HP {ori}→{curr}");
         if (max > 0) sb.Append($"/{max}");
@@ -1015,6 +1049,14 @@ internal sealed class BattleLogger
     }
 
     /// <summary>
+    /// <c>UseEffectCardS2C</c>가 방금 발표한 액티브 스킬. <b><see cref="_saidSource"/>를
+    /// 쓰면 안 된다</b> — 승격된 <c>스킬 발동</c> 머리줄도 <c>Said(SkillCause, ...)</c>를
+    /// 부르기 때문에, 그걸 보면 바로 다음 발동이 자기 자신에게 억제돼 사건이 사라진다.
+    /// </summary>
+    private long _activeSkillId;
+    private DateTime _activeSkillAt;
+
+    /// <summary>
     /// 액티브 사용이 낳은 메아리 버프를 가려내는 시간 창.
     ///
     /// <b>이건 휴리스틱이다.</b> 버프 메시지의 대상은 시전자가 아니고, 시전자는 선에
@@ -1028,8 +1070,8 @@ internal sealed class BattleLogger
     private static readonly TimeSpan SkillEchoWindow = TimeSpan.FromMilliseconds(250);
 
     private bool AlreadySaidSkill(long skillId) =>
-        _saidSource == SkillCause && _saidId == skillId
-        && DateTime.UtcNow - _saidAt < SkillEchoWindow;
+        _activeSkillId == skillId && skillId != 0
+        && DateTime.UtcNow - _activeSkillAt < SkillEchoWindow;
 
     /// <summary>
     /// <c>SelectRelicS2C</c>가 방금 이 칩 획득을 말했는가. 같은 칩을 두 사람이 같은
@@ -1076,17 +1118,17 @@ internal sealed class BattleLogger
         if (b.SourceKind == SkillOrigin && kind == BuffEvent.Gain
             && _names.Lookup("skill", b.SourceId) is { } skill)
         {
-            // 머리줄이 이미 그 스킬을 말했으면(`(스킬 "훔치기")`) 같은 말을 두 번 하는 것이다.
-            if (causeSource == SkillCause && causeId == b.SourceId) return "";
             if (AlreadySaidSkill(b.SourceId)) return "";
-
-            // 한 메시지가 같은 스킬 버프를 대상별로 여러 개 싣고 온다 — 실측에서
-            // `스킬 발동 "훔치기" → ?43838`이 한 덩어리 안에 두 줄 나왔다.
             if (!_skillFired.Add((b.SourceId, pid))) return "";
 
             var line = new StringBuilder($"스킬 발동 \"{skill}\" → {_roster.Name(pid)}");
             if (b.KeepRound != 0) line.Append($" {b.KeepRound}턴");
-            return line.ToString();
+            string text = line.ToString();
+
+            // 머리줄이 말하려던 그 스킬이면 이 줄이 머리줄을 대신한다.
+            if (causeSource == SkillCause && causeId == b.SourceId && _causeSkillLine is null)
+                _causeSkillLine = text;
+            return text;
         }
 
         var sb = new StringBuilder(kind switch

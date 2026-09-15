@@ -43,7 +43,7 @@ python .claude/skills/proto-field-audit/scripts/dump_tags.py <디컴파일루트
 | 〃 | **한 PK에 여러 장 낼 수 있다** (`RoundStartS2C.UseCardMaxNum`). 실측에서 한 사람이 3장을 냈다 — 제출 줄을 묶으면 안 되고, 같은 `CardId`(uid)가 다시 올 때만 막는다 |
 | `SelectRelicS2C`(5212) | 칩 획득의 확정 신호. `!IsReroll && RelicId != 0` (`RelicLogic`) |
 | `HeroHpChangeS2C`(1040 안) | 화면 숫자는 `RealChangeHp`, 실제 HP는 `RealHp`(0이면 `HP + RealChangeHp`) — `BattleProperty.OnLifeChanged` |
-| 〃 | **만피에서 회복을 받으면 `RealChangeHp`도 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`) |
+| 〃 | **만피에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
 | `HeroBuffChangeS2C` | 한 메시지가 같은 스킬 출처 버프를 **대상별로 여러 개** 싣고 온다 |
 
 ## 표

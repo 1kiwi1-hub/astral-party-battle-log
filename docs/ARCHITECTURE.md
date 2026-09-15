@@ -523,18 +523,42 @@ if (_characterInst != null && (HpChange.RealChangeHp != 0 || !isFight))
     _characterInst.signal.attrChange.Dispatch((HpChange.OriHp, HpChange.CurrHp, HpChange.RealChangeHp, 5), "");
 ```
 
-`ChangeHp`는 **의도한** 값이라 막히거나 넘치면 실제와 다르다 — 만피에서 회복을 받으면
-`ChangeHp`만 +2로 오고 `HP 10→10/10 +2` 같은 헛줄이 된다(실측 10줄).
-게임도 전투 중에는 `RealChangeHp == 0`이면 팝업을 띄우지 않는다.
+**틀렸던 가정 (v0.1.3 후보에서 폐기):** "`RealChangeHp`를 쓰면 만피 회복 잡음이
+사라진다"고 적었는데 실측에서 10건이 전부 통과했다. 서버는 **넘친 회복도
+`RealChangeHp`에 싣는다** — 10건 모두 `CurrHp == MaxHp`였고 `real`이 +2/+3이었다.
 
-`ChangeHp != RealChangeHp`인 사례와 `RealHp != CurrHp`인 사례는 아직 표본이 없다.
-`TraceFrames`를 켜면 그 두 경우에 `hp pid=... change=... real=... realHp=...` 진단이
-남으므로, 표본을 모은 뒤 "시도된 피해"를 따로 보여줄지 결정할 것.
+그래서 필터는 `real == 0`이 아니라 **"전후가 같은데 이미 만피인 증가"**를 버린다.
+전후가 같은 그 밖의 경우는 정체를 몰라 남긴다.
+
+**아직 미확정인 것:**
+
+- 화면의 최종 HP가 `CurrHp`인지 `RealHp`인지 (지금은 `OriHp`/`CurrHp`로 찍는다)
+- `RealChangeHp`가 실제 반영량인지 효과가 주장하는 변화량인지
+- `ori == curr && real != 0`이 넘친 회복 말고 또 언제 나오는지
+
+`TraceFrames`를 켜면 **필터에 걸린 것까지 포함해** 진단이 남는다:
+
+```
+hp filtered=max-heal pid=... ori=9 curr=9 change=2 real=2 realHp=... max=9 dmg=... killer=...
+```
+
+표본을 모으기 전에는 `HP 9→9 [회복 +2 초과]` 같은 표기를 넣지 않는다.
 
 ## 스킬 메아리 억제는 휴리스틱이다 (v0.1.3)
 
 액티브 스킬은 `스킬 사용` 줄을 낸 뒤 **같은 스킬의 버프**를 또 만든다. 그래서
 `스킬 발동` 줄이 겹친다(실측 20줄 중 11줄).
+
+겹치는 자리가 셋이라 막는 곳도 셋이다.
+
+| 겹침 | 막는 곳 |
+| --- | --- |
+| 액티브 `스킬 사용` ↔ 뒤따르는 버프 | `AlreadySaidSkill` (같은 스킬 id + 250ms) |
+| 한 메시지 안에서 같은 (스킬, 대상) | `_skillFired` (대상이 다르면 각각 남긴다) |
+| 원인 머리줄 `(스킬 "X")` ↔ 본문 `스킬 발동 "X"` | 본문을 머리줄 자리로 **끌어올린다** |
+
+셋째를 "본문을 지운다"로 하면 효과 줄이 없을 때 `lines.Count == 0`에 걸려 **사건이
+통째로 사라진다.** 본문에는 대상이 있고 머리줄에는 없으므로 본문을 남기는 쪽이 맞다.
 
 억제는 **같은 스킬 id + 250ms 안**으로만 한다. 버프 메시지의 대상은 시전자가 아니고
 시전자는 선에 실려 오지 않으므로 주체를 대조할 수가 없다 — **다른 사람이 같은 스킬을
