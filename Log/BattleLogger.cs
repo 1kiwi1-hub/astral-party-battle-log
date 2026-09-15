@@ -866,7 +866,11 @@ internal sealed class BattleLogger
             }
         }
 
-        if (change == 0 && ori == curr) return "";
+        // HP가 그대로인데 증감만 실려 오는 경우가 많다 — 만피에서 회복을 받으면
+        // `HP 10→10/10  +2`처럼 일어나지 않은 변화를 말하게 된다.
+        //
+        // 음수는 남긴다. 피해를 입었는데 HP가 그대로면 막아냈다는 뜻이라 사건이다.
+        if (ori == curr && change >= 0) return "";
         var sb = new StringBuilder($"{_roster.Name(pid)} HP {ori}→{curr}");
         if (max > 0) sb.Append($"/{max}");
         sb.Append($"  {Palette.Delta($"{change:+0;-0}", change < 0)}");
@@ -1002,12 +1006,12 @@ internal sealed class BattleLogger
     {
         if (b.SourceKind == RelicOrigin)
         {
-            string verb = kind switch
-            {
-                BuffEvent.Gain => "칩 획득",
-                BuffEvent.Lose => "칩 잃음",
-                _ => "칩 갱신",
-            };
+            // 칩이 "갱신"되는 건 사용자에게 사건이 아니다. 이미 가진 칩이고, 실제로
+            // 달라진 값은 바로 옆의 ATK/DEF 줄이 보여준다. 라운드마다 갱신만 오는
+            // 칩도 있어서(실측: `8면체 주사위` 한 판에 15줄) 숫자 없는 줄만 쌓인다.
+            if (kind == BuffEvent.Update) return "";
+
+            string verb = kind == BuffEvent.Gain ? "칩 획득" : "칩 잃음";
             string? chip = _names.Lookup("relic", b.SourceId);
             string label = chip is null
                 ? ""
