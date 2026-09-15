@@ -32,6 +32,20 @@ python .claude/skills/proto-field-audit/scripts/dump_tags.py <디컴파일루트
 | `Player` | 10 `Hero`의 8 `Cards` | 손패. `Hero`에서는 `HeroId`(2)만 꺼낸다 |
 | `HeroHpChangeS2C` | — | 전부 읽는다 (5 `RealChangeHp`, 6 `RealHp` 포함) |
 
+## 메시지별로 알아둘 것
+
+코드에서 뺀 사실들이다. 필드 번호만으로는 알 수 없고, 잘못 알면 조용히 틀린다.
+
+| 메시지 | 사실 |
+| --- | --- |
+| `MonsterRefreshS2C`(1018) | **몹 명단은 `Room`이 아니라 여기서 온다.** Room만 읽으면 전투 상대가 전부 `?id`로 남는다 |
+| `BattleUseCardS2C`(5036) | 공개 전에는 `CardId == 0`으로 온다. 게임도 그때만 "준비 완료" 표시를 띄운다(`FightLogic`) |
+| 〃 | **한 PK에 여러 장 낼 수 있다** (`RoundStartS2C.UseCardMaxNum`). 실측에서 한 사람이 3장을 냈다 — 제출 줄을 묶으면 안 되고, 같은 `CardId`(uid)가 다시 올 때만 막는다 |
+| `SelectRelicS2C`(5212) | 칩 획득의 확정 신호. `!IsReroll && RelicId != 0` (`RelicLogic`) |
+| `HeroHpChangeS2C`(1040 안) | 화면 숫자는 `RealChangeHp`, 실제 HP는 `RealHp`(0이면 `HP + RealChangeHp`) — `BattleProperty.OnLifeChanged` |
+| 〃 | **만피에서 회복을 받으면 `RealChangeHp`도 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`) |
+| `HeroBuffChangeS2C` | 한 메시지가 같은 스킬 출처 버프를 **대상별로 여러 개** 싣고 온다 |
+
 ## 표
 
 ```

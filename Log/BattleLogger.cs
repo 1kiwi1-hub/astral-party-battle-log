@@ -77,6 +77,19 @@ internal sealed class BattleLogger
     private bool _goldSeenMany;
 
     /// <summary>
+    /// 이번 <c>UpdateHeroAttr</c>에서 이미 찍은 (스킬, 대상). 한 메시지가 같은 스킬
+    /// 버프를 여러 개 싣고 오기 때문에 대상별로 한 번만 남긴다.
+    /// </summary>
+    private readonly HashSet<(long SkillId, long Pid)> _skillFired = new();
+
+    /// <summary>
+    /// 이번 행동에서 이미 찍은 (플레이어, 카드 uid). <b>한 PK에 카드를 여러 장 낼 수
+    /// 있으므로</b>(<c>RoundStartS2C.useCardMaxNum</c>) 제출 자체를 묶으면 안 된다.
+    /// 같은 uid가 다시 오는 것만 막는다.
+    /// </summary>
+    private readonly HashSet<(long Pid, long CardUid)> _cardSubmits = new();
+
+    /// <summary>
     /// 이번 <c>UpdateHeroAttr</c>의 원인이 <b>칩이면서 이름까지 알려줬는지</b>.
     /// 이름을 모르면(<c>id == 0</c>) 버프 줄을 버리지 않는다 — 그땐 그 줄이 유일한 단서다.
     /// </summary>
@@ -147,6 +160,9 @@ internal sealed class BattleLogger
                 if (_roster.Update(body))
                     foreach (long id in _roster.LastChanged)
                     {
+                        // 캐릭터가 정해지기 전 명단은 찍지 않는다 (Roster.HasHero 주석).
+                        if (!_roster.HasHero(id)) continue;
+
                         // 패시브는 발동해도 "스킬 썼다"가 안 오므로 미리 적어둔다.
                         string skills = _roster.Skills(id);
                         Emit($"· 참가자 {_roster.Describe(id, _logPlayerIds)}"
@@ -191,6 +207,7 @@ internal sealed class BattleLogger
         _round = (int)round;
         if (playerId != 0) _turnOwner = playerId;
         _saidSkillUse = 0;
+        _cardSubmits.Clear();
         NewPage();
     }
 
@@ -221,6 +238,7 @@ internal sealed class BattleLogger
         _turnOwner = pid;
         Said(-1, 0, 0);   // 턴이 바뀌면 문맥을 버린다
         _saidSkillUse = 0;
+        _cardSubmits.Clear();
         var note = new StringBuilder();
         if (die != 0) note.Append(" [사망]");
         if (hospital != 0) note.Append(" [병원]");
@@ -294,7 +312,8 @@ internal sealed class BattleLogger
             }
         }
         if (noCard != 0) { Emit($"[R{_round}] {_roster.Name(pid)} 카드 안 냄"); return; }
-        if (cardId > 0) Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
+        if (cardId > 0 && _cardSubmits.Add((pid, cardId)))
+            Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
     }
 
     // UseSkill(8)로 카드와 스킬이 갈린다. cardId만 보고 버리면 스킬 사용이 통째로 사라진다.
@@ -497,6 +516,7 @@ internal sealed class BattleLogger
         _goldSeen = null;
         _goldSeenMany = false;
         _causeNamesRelic = false;
+        _skillFired.Clear();
 
         while (r.NextField(out int field, out int wire))
         {
@@ -511,7 +531,7 @@ internal sealed class BattleLogger
             }
             else if (field == 4 && wire == ProtoReader.WireLength && r.TryReadMessage(out var effect))
             {
-                DecodeEffect(effect, lines, causeSource);
+                DecodeEffect(effect, lines, causeSource, causeId);
             }
             else if (!r.Skip(wire))
             {
@@ -775,7 +795,7 @@ internal sealed class BattleLogger
             ? Palette.Relic($"\"{name}\"", _names.Lookup("relicgrade", id))
             : "";
 
-    private void DecodeEffect(ProtoReader r, List<string> lines, long causeSource)
+    private void DecodeEffect(ProtoReader r, List<string> lines, long causeSource, long causeId)
     {
         long target = 0;
         while (r.NextField(out int field, out int wire))
@@ -793,7 +813,7 @@ internal sealed class BattleLogger
                     case 3: Add(lines, DecodeHp(sub, target, causeSource)); break;
                     case 4: Add(lines, DecodeStat(sub, target, 5, attack: true)); break;
                     case 5: Add(lines, DecodeStat(sub, target, 5, attack: false)); break;
-                    case 6: DecodeBuff(sub, target, causeSource, lines); break;
+                    case 6: DecodeBuff(sub, target, causeSource, causeId, lines); break;
                     case 15: Add(lines, DecodeNum(sub, target, "회복량")); break;
                     case 21: Add(lines, DecodeNum(sub, target, "반격")); break;
                 }
@@ -861,8 +881,13 @@ internal sealed class BattleLogger
             }
         }
 
-        // 전후가 같고 실제 증감도 0이면 아무 일도 없었다.
+        // 전후가 같으면 화면에 보이는 HP는 그대로다.
+        //
+        // **만피에서 회복을 받으면 RealChangeHp도 +2로 온다** (실측 10건, 전부
+        // `curr == max`). 그래서 `real == 0`만으로는 안 걸러진다 — 넘친 회복은 버린다.
+        // 그 밖에 전후가 같은데 증감이 실려 오는 경우는 아직 정체를 모르므로 남긴다.
         if (ori == curr && real == 0) return "";
+        if (ori == curr && real > 0 && max > 0 && curr >= max) return "";
 
         // 서버가 RealChangeHp를 안 실어 보냈는데 HP는 움직인 경우가 있을 수 있다.
         // 그땐 전후 차이가 유일한 사실이다.
@@ -870,7 +895,7 @@ internal sealed class BattleLogger
 
         // ChangeHp와 어긋나는 사례, RealHp와 CurrHp가 어긋나는 사례를 모으기 위한
         // 진단. 어느 쪽을 보여줄지 정하려면 실측 표본이 필요하다.
-        if (_traceUnknown && (change != real || (realHp != 0 && realHp != curr)))
+        if (_traceUnknown && (change != real || ori == curr || (realHp != 0 && realHp != curr)))
             Diag($"hp pid={pid} ori={ori} curr={curr} change={change} "
                  + $"real={real} realHp={realHp} max={max}");
 
@@ -900,7 +925,8 @@ internal sealed class BattleLogger
     }
 
     // 버프가 하나면 필드 2, 여러 개면 필드 4(map)로 온다. 필드 2만 읽으면 이름이 안 붙는다.
-    private void DecodeBuff(ProtoReader r, long fallbackTarget, long causeSource, List<string> lines)
+    private void DecodeBuff(ProtoReader r, long fallbackTarget, long causeSource, long causeId,
+                            List<string> lines)
     {
         long pid = fallbackTarget, op = 0;
         BuffInfo? single = null;
@@ -960,7 +986,7 @@ internal sealed class BattleLogger
 
         // Oper { 0:Noop, 1:Insert, 2:Delete, 3:Update }
         // **Noop은 "아무 일 없음"이 아니라 필드 4로 온 전체 목록이다.** diff를 떠야 한다.
-        if (op == 0 && haveList) { RefreshBuffs(pid, list, lines); return; }
+        if (op == 0 && haveList) { RefreshBuffs(pid, list, causeSource, causeId, lines); return; }
 
         if (single is not { } b) return;
 
@@ -969,7 +995,7 @@ internal sealed class BattleLogger
         {
             if (b.Id == 0 && _buffs.TryGetValue(b.Uid, out var known)) b = known.Info;
             _buffs.Remove(b.Uid);
-            Add(lines, BuffLine(pid, b, BuffEvent.Lose));
+            Add(lines, BuffLine(pid, b, BuffEvent.Lose, causeSource, causeId));
             return;
         }
 
@@ -978,7 +1004,7 @@ internal sealed class BattleLogger
         // op 0이 목록 없이 오기도 한다. 그땐 처음 보는 것이면 획득으로 친다.
         Add(lines, BuffLine(pid, b, op == 3 ? BuffEvent.Update
                                   : op == 1 || isNew ? BuffEvent.Gain
-                                  : BuffEvent.Update));
+                                  : BuffEvent.Update, causeSource, causeId));
     }
 
     private enum BuffEvent { Gain, Update, Lose }
@@ -1017,7 +1043,7 @@ internal sealed class BattleLogger
     /// 버프 한 줄. 출처가 칩이면 동사를 바꾼다 — 사용자에게 그건 버프가 아니라 칩을
     /// 얻은 것이고, 체크포인트처럼 <b>원인 없이 오는 경로</b>에서는 이 줄이 유일한 단서다.
     /// </summary>
-    private string BuffLine(long pid, BuffInfo b, BuffEvent kind)
+    private string BuffLine(long pid, BuffInfo b, BuffEvent kind, long causeSource, long causeId)
     {
         if (b.SourceKind == RelicOrigin)
         {
@@ -1050,7 +1076,14 @@ internal sealed class BattleLogger
         if (b.SourceKind == SkillOrigin && kind == BuffEvent.Gain
             && _names.Lookup("skill", b.SourceId) is { } skill)
         {
+            // 머리줄이 이미 그 스킬을 말했으면(`(스킬 "훔치기")`) 같은 말을 두 번 하는 것이다.
+            if (causeSource == SkillCause && causeId == b.SourceId) return "";
             if (AlreadySaidSkill(b.SourceId)) return "";
+
+            // 한 메시지가 같은 스킬 버프를 대상별로 여러 개 싣고 온다 — 실측에서
+            // `스킬 발동 "훔치기" → ?43838`이 한 덩어리 안에 두 줄 나왔다.
+            if (!_skillFired.Add((b.SourceId, pid))) return "";
+
             var line = new StringBuilder($"스킬 발동 \"{skill}\" → {_roster.Name(pid)}");
             if (b.KeepRound != 0) line.Append($" {b.KeepRound}턴");
             return line.ToString();
@@ -1077,7 +1110,8 @@ internal sealed class BattleLogger
     /// <summary>
     /// 사라진 버프의 이름은 새 목록에 없으므로 기억해 둔 것에서 가져온다.
     /// </summary>
-    private void RefreshBuffs(long pid, List<BuffInfo> now, List<string> lines)
+    private void RefreshBuffs(long pid, List<BuffInfo> now, long causeSource, long causeId,
+                              List<string> lines)
     {
         var present = new HashSet<long>();
         foreach (var b in now) if (b.Uid != 0) present.Add(b.Uid);
@@ -1088,7 +1122,7 @@ internal sealed class BattleLogger
         foreach (var b in gone)
         {
             _buffs.Remove(b.Uid);
-            Add(lines, BuffLine(pid, b, BuffEvent.Lose));
+            Add(lines, BuffLine(pid, b, BuffEvent.Lose, causeSource, causeId));
         }
 
         foreach (var b in now)
@@ -1097,7 +1131,7 @@ internal sealed class BattleLogger
             bool isNew = !_buffs.ContainsKey(b.Uid);
             _buffs[b.Uid] = (pid, b);
             if (!isNew) continue;   // 이미 알던 건 조용히 갱신만 한다
-            Add(lines, BuffLine(pid, b, BuffEvent.Gain));
+            Add(lines, BuffLine(pid, b, BuffEvent.Gain, causeSource, causeId));
         }
     }
 
@@ -1239,6 +1273,8 @@ internal sealed class BattleLogger
         _round = 0;
         _turnOwner = 0;
         _saidSkillUse = 0;
+        _cardSubmits.Clear();
+        _skillFired.Clear();
         if (_filePath is null) return;
         lock (_fileGate)
         {

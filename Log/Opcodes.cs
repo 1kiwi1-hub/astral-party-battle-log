@@ -14,22 +14,17 @@ internal static class Op
     public const int GameRoundChange = 1117;
     public const int MoveAgain = 5044;
 
-    /// <summary>PK 결과. <c>{1: party.model.Battle}</c></summary>
     public const int Battle = 1007;
 
     public const int ActionStartNotify = 1026;
 
-    /// <summary>플레이어 명단이 있는 <c>{1: party.model.Room}</c>을 실어 온다.</summary>
     public const int RunningGame = 1003;
     public const int StartGame = 5020;
 
-    /// <summary>몹 명단은 Room이 아니라 여기서 온다. <c>{1: party.model.Player}</c></summary>
     public const int MonsterRefresh = 1018;
 
-    /// <summary>PK에 카드를 냈다. 공개 전에는 <c>cardId == 0</c>으로 온다.</summary>
     public const int BattleUseCard = 5036;
 
-    /// <summary>보드에서 공개적으로 쓴 효과 카드.</summary>
     public const int UseEffectCard = 5056;
 
     /// <summary>

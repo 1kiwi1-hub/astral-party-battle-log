@@ -182,6 +182,17 @@ internal sealed class Roster
     }
 
     /// <summary>
+    /// 표시명이 캐릭터/몹 이름으로 확정됐는가. <c>false</c>면 아직 계정 닉네임이나
+    /// <c>2P</c> 같은 자리표시자다.
+    ///
+    /// 명단은 캐릭터 선택 <b>전후로 두 번</b> 온다. 확정 전 것을 찍으면 같은 사람이 두 벌
+    /// 나오고, 게다가 첫 벌에는 <b>계정 닉네임</b>이 들어간다 — 로그를 공유하면 남의
+    /// 계정 정보가 같이 나간다(CONTRIBUTING "계정 식별자를 로그 본문에 쓰지 않는다").
+    /// </summary>
+    public bool HasHero(long id) =>
+        _entries.TryGetValue(id, out Entry? e) && e.HeroId != 0;
+
+    /// <summary>
     /// 이 참가자가 가진 스킬 이름들. <b>패시브는 발동해도 "스킬 썼다"가 안 오고 버프로만
     /// 오므로</b>, 미리 적어둬야 나중 버프 줄을 패시브로 짚어낼 수 있다.
     /// </summary>
