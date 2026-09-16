@@ -36,6 +36,12 @@ internal sealed class BattleLogger
     private long _turnOwner;
 
     /// <summary>
+    /// 지금 판의 방. 판 시작 신호 직후와 플러그인이 판 중간에 켜졌을 때는 아직 모른다.
+    /// 처음 본 방은 채택하고, 이미 아는 방과 달라졌을 때만 새 판 안전망을 작동시킨다.
+    /// </summary>
+    private long _roomId;
+
+    /// <summary>
     /// 소환물. 버프 uid → (칸, 버프 id). <c>LandBuffsS2C</c>가 칸 단위 전체 목록으로
     /// 오므로, diff를 뜨려면 이전 상태가 필요하다.
     /// </summary>
@@ -141,10 +147,17 @@ internal sealed class BattleLogger
     private static bool IsNumber(int wire) =>
         wire == ProtoReader.WireVarint || wire == ProtoReader.WireFixed32 || wire == ProtoReader.WireFixed64;
 
-    public void OnFrame(int cmdId, byte[] body)
+    public void OnFrame(int cmdId, int errId, byte[] body)
     {
         // 짝 없는 골드 줄(상점 지출 등)이 영영 안 나오는 걸 막는 안전장치.
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
+
+        if (Op.GameEntry.Contains(cmdId))
+        {
+            if (errId == 0) BeginGame(Op.Name(cmdId));
+            else Diag($"[game] {Op.Name(cmdId)}({cmdId}) err={errId}, ignored");
+            return;
+        }
 
         if (!Op.Allowed.Contains(cmdId))
         {
@@ -160,12 +173,24 @@ internal sealed class BattleLogger
         switch (cmdId)
         {
             case Op.StartGame:
+                // 실패 응답이면 게임도 방 설정 화면만 새로 그린다. 판이 시작된 게 아니다.
+                if (errId != 0)
+                {
+                    Diag($"[game] StartGame(5020) err={errId}, ignored");
+                    break;
+                }
                 // 순서 주의: StartGameS2C가 이번 판 Room을 싣고 오므로 먼저 비우고 읽는다.
-                Reset();
-                MirrorClear?.Invoke();
+                BeginGame("StartGame");
                 goto case Op.RunningGame;
             case Op.RunningGame:
+                if (errId != 0)
+                {
+                    Diag($"[game] RunningGame(1003) err={errId}, ignored");
+                    break;
+                }
+                TrackRoom(Roster.ReadRoomId(body));
                 _lands.Update(body);
+                int printed = 0;
                 if (_roster.Update(body))
                     foreach (long id in _roster.LastChanged)
                     {
@@ -176,7 +201,9 @@ internal sealed class BattleLogger
                         string skills = _roster.Skills(id);
                         Emit($"· 참가자 {_roster.Describe(id, _logPlayerIds)}"
                              + (skills.Length > 0 ? $"  [{skills}]" : ""));
+                        printed++;
                     }
+                Diag($"[game] {Op.Name(cmdId)}({cmdId}) roster changed={_roster.LastChanged.Count} printed={printed}");
                 break;
             case Op.MonsterRefresh:
                 _roster.UpdateMonster(body);
@@ -191,7 +218,10 @@ internal sealed class BattleLogger
                 break;
             case Op.ActionStartNotify: DecodeActionStart(body); break;
             case Op.Battle: DecodeBattle(body); break;
-            case Op.GameFinish: Emit("──────── 게임 종료 ────────"); break;
+            case Op.GameFinish:
+                Diag("[game] GameFinish(1016)");
+                Emit("──────── 게임 종료 ────────");
+                break;
             case Op.UpdateHeroAttr:
                 DecodeUpdateHeroAttr(new ProtoReader(body, 0, body.Length));
                 break;
@@ -1295,28 +1325,74 @@ internal sealed class BattleLogger
     private void NewPage()
     {
         FlushGold();   // 붙들어 둔 줄이 다음 라운드 페이지로 넘어가면 안 된다
+        Diag($"[game] round {_round}");
         try { MirrorNewPage?.Invoke(_round); } catch { }
         WriteFile($"──────── Round {_round} ────────");
     }
 
     /// <summary>
-    /// 새 판이 시작됐다. 파일과 상태를 비운다.
+    /// 새 판이 시작됐다. 판 시작 신호는 판마다 <b>하나</b>다 — 사용자 방은
+    /// <c>StartGameS2C</c>, 매칭은 <c>MatchSuccessS2C</c>, 싱글은 <c>SingleCampaignS2C</c>.
+    /// 셋 다 픽창을 열 때 오므로 참가자 줄이 나가기 전이다.
     ///
     /// **씬 전환에 걸면 안 된다.** 방에서 전투 씬으로 *들어갈* 때도 발동해서 방에서
-    /// 받아둔 명단과 라운드를 통째로 지워버린다. 판의 시작은 <c>StartGameS2C</c>다.
+    /// 받아둔 명단과 라운드를 통째로 지워버린다.
     /// </summary>
-    public void Reset()
+    private void BeginGame(string why)
+    {
+        Diag($"[game] new game ({why}); roster/round/state reset");
+        Reset();
+        _roomId = 0;
+        MirrorClear?.Invoke();
+    }
+
+    /// <summary>
+    /// 판 시작 신호를 놓쳤을 때의 안전망. <c>RunningGameS2C</c>는 한 판에 여러 번 오므로
+    /// 그 자체로는 새 판이 아니다. <b>방이 바뀌었을 때만</b> 새 판으로 본다 — 매칭·싱글은
+    /// 판마다 방을 새로 만든다. 같은 방에서 다시 하는 판은 <c>StartGameS2C</c>가 맡는다.
+    /// </summary>
+    private void TrackRoom(long roomId)
+    {
+        if (roomId == 0)
+        {
+            Diag("[game] room message without room id");
+            return;
+        }
+        if (_roomId == roomId) return;
+
+        if (_roomId == 0)
+        {
+            Diag("[game] room adopted for this game");
+        }
+        else
+        {
+            BeginGame("room changed without a start signal");
+        }
+        _roomId = roomId;
+    }
+
+    private void Reset()
     {
         _roster.Clear();
         _lands.Clear();
         _landSummons.Clear();
         _buffs.Clear();
         _goldHold = null;   // 지난 판 줄이다. 파일을 비운 뒤에 나오면 안 된다
+        _goldSeen = null;
+        _goldSeenMany = false;
         _round = 0;
         _turnOwner = 0;
         _saidSkillUse = 0;
         _cardSubmits.Clear();
         _skillFired.Clear();
+        _causeSkillLine = null;
+        _causeNamesRelic = false;
+        _saidSource = -1;
+        _saidId = 0;
+        _saidActor = 0;
+        _saidAt = default;
+        _activeSkillId = 0;
+        _activeSkillAt = default;
         if (_filePath is null) return;
         lock (_fileGate)
         {

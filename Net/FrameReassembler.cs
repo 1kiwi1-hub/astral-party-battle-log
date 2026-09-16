@@ -48,9 +48,10 @@ internal sealed class FrameReassembler
         _len += count;
     }
 
-    public bool TryDequeue(out int cmdId, out byte[] body)
+    public bool TryDequeue(out int cmdId, out int errId, out byte[] body)
     {
         cmdId = 0;
+        errId = 0;
         body = Array.Empty<byte>();
         if (Rejected || _len < HeaderLength) return false;
 
@@ -66,6 +67,7 @@ internal sealed class FrameReassembler
         if (_len < total) return false;
 
         cmdId = ReadUInt16BE(_buf, 12);
+        errId = (short)ReadUInt16BE(_buf, 33);
         body = new byte[bodyLen];
         Buffer.BlockCopy(_buf, HeaderLength, body, 0, bodyLen);
 

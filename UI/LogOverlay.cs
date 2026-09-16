@@ -180,7 +180,7 @@ internal static class LogOverlay
     public static void NewPage(int round) => Pending.Enqueue(Signal.Page(round));
 
     /// <summary>
-    /// 새 판이 시작됐다(<c>StartGameS2C</c>). 이 신호는 <b>픽창에서</b> 오므로 여기서는
+    /// 새 판이 시작됐다. 판 시작 신호는 <b>픽창에서</b> 오므로 여기서는
     /// 페이지만 비우고, 창은 픽창을 벗어나는 씬 전환(<see cref="OnSceneChanged"/>)에서 띄운다.
     /// 소켓 스레드에서 부르므로 큐를 거쳐 <see cref="Pump"/>가 처리한다.
     /// </summary>

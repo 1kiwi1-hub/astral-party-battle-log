@@ -21,6 +21,9 @@ internal static class Op
     public const int RunningGame = 1003;
     public const int StartGame = 5020;
 
+    public const int MatchSuccess = 5226;
+    public const int SingleCampaign = 5230;
+
     public const int MonsterRefresh = 1018;
 
     public const int BattleUseCard = 5036;
@@ -72,6 +75,18 @@ internal static class Op
         HeroSkillMoveEffect,
     };
 
+    /// <summary>
+    /// <b>opcode만 보는</b> 판 진입 신호. 셋 다 픽창을 여는 메시지인데 <c>StartGameS2C</c>는
+    /// 사용자 방에서만 오므로, 매칭·싱글 판은 이것 없이는 새 판을 알 수 없다.
+    /// 본문(방 전체 = 손패 포함)은 필요 없으므로 <see cref="Allowed"/>에 넣지 않는다 —
+    /// 헤더의 cmdId와 ERR만 읽는다.
+    /// </summary>
+    public static readonly HashSet<int> GameEntry = new()
+    {
+        MatchSuccess,
+        SingleCampaign,
+    };
+
     public static string Name(int cmdId) => cmdId switch
     {
         RoundStart => "RoundStart",
@@ -83,6 +98,8 @@ internal static class Op
         Battle => "Battle",
         RunningGame => "RunningGame",
         StartGame => "StartGame",
+        MatchSuccess => "MatchSuccess",
+        SingleCampaign => "SingleCampaign",
         MonsterRefresh => "MonsterRefresh",
         BattleUseCard => "BattleUseCard",
         UseEffectCard => "UseEffectCard",

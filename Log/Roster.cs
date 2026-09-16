@@ -71,12 +71,12 @@ internal sealed class Roster
 
     public bool Update(byte[] body)
     {
+        LastChanged.Clear();
         var outer = new ProtoReader(body, 0, body.Length);
         if (!outer.NextField(out int f, out int w) || f != 1 || w != ProtoReader.WireLength) return false;
         if (!outer.TryReadMessage(out var room)) return false;
 
         bool changed = false;
-        LastChanged.Clear();
         while (room.NextField(out int field, out int wire))
         {
             if (wire == ProtoReader.WireLength && (field == 9 || field == 10))
@@ -90,6 +90,22 @@ internal sealed class Roster
             }
         }
         return changed;
+    }
+
+    public static long ReadRoomId(byte[] body)
+    {
+        var outer = new ProtoReader(body, 0, body.Length);
+        if (!outer.NextField(out int f, out int w) || f != 1 || w != ProtoReader.WireLength) return 0;
+        if (!outer.TryReadMessage(out var room)) return 0;
+
+        while (room.NextField(out int field, out int wire))
+        {
+            if (field == 1 && wire is ProtoReader.WireVarint or ProtoReader.WireFixed32
+                                         or ProtoReader.WireFixed64)
+                return room.TryReadNumber(wire, out long id) ? id : 0;
+            if (!room.Skip(wire)) break;
+        }
+        return 0;
     }
 
     /// <summary>
@@ -164,13 +180,28 @@ internal sealed class Roster
         _entries[id] = new Entry
         {
             Kind = kind,
-            Ordinal = count + 1,
+            Ordinal = FreeOrdinal(id, isMonster, kind),
             IsMonster = isMonster,
             Slot = isMonster ? -1 : (int)slot,
             HeroId = heroId,
         };
         LastChanged.Add(id);
         return true;
+    }
+
+    /// <summary>
+    /// 같은 종류 안에서 아직 안 쓴 가장 작은 번호. 인원수+1을 쓰면 픽창에서 캐릭터를
+    /// 바꿨다가 다른 사람이 같은 캐릭터를 고를 때 두 사람이 같은 번호를 갖는다.
+    /// </summary>
+    private int FreeOrdinal(long self, bool isMonster, string kind)
+    {
+        var used = new HashSet<int>();
+        foreach (var (id, e) in _entries)
+            if (id != self && e.IsMonster == isMonster && e.Kind == kind) used.Add(e.Ordinal);
+
+        int n = 1;
+        while (used.Contains(n)) n++;
+        return n;
     }
 
     private void Release(bool isMonster, string kind)

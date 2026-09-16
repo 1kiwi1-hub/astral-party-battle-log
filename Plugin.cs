@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.4")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.5")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
@@ -129,7 +129,7 @@ public class Plugin : BasePlugin
         //
         // 여기서 로거 상태(명단·라운드)까지 지우면 안 된다 — 씬 전환은 게임에
         // *들어갈* 때도 일어나서 방에서 받아둔 명단을 날려버린다. 그건 새 판이
-        // 시작될 때(StartGameS2C) 로거가 스스로 한다.
+        // 시작될 때(StartGame/MatchSuccess/SingleCampaign 신호) 로거가 스스로 한다.
         FramePump.OnSceneChanged = LogOverlay.OnSceneChanged;
 
         try
