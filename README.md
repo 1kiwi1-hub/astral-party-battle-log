@@ -1,5 +1,7 @@
 # Astral Party Battle Log
 
+[![Latest pre-release](https://img.shields.io/github/v/release/YoungHoon02/astral-party-battle-log?include_prereleases&sort=semver&style=for-the-badge&logo=github&label=download)](../../releases)
+
 Astral Party의 전투를 턴별 텍스트 로그로 남기는 BepInEx 플러그인.
 인게임 오버레이와 `battle-log.txt` 파일 두 곳에 동시에 남는다.
 
