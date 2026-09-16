@@ -423,25 +423,18 @@ internal static class LogOverlay
         return new Vector2(DefaultMargin, canvasH - DefaultMargin - MaxPanelSize().y);
     }
 
-    /// <summary>
-    /// 창이 가질 수 있는 가장 큰 크기. 경계 계산을 현재 크기가 아니라 이 값으로 해야
-    /// 로그 양에 따라 창이 커지고 줄어도 좌상단이 한 번도 움직이지 않는다.
-    /// </summary>
+    /// <summary>첫 로그의 양에 따라 기본 위치가 흔들리지 않도록 자동 배치는 최대 크기를 쓴다.</summary>
     private static Vector2 MaxPanelSize()
     {
         float lineHeight = FontSize * 1.45f;
-        return new Vector2(Width, lineHeight * (MaxLines + 1) + PadY * 2f);
+        return new Vector2(Width, lineHeight * MaxLines + FontSize + PadY * 2f);
     }
 
-    /// <summary>
-    /// 최대 크기 창이 화면 안에 들어가도록 좌상단(y는 위에서 아래로)을 제한한다.
-    /// 창이 화면보다 크면 위쪽(그립이 있는 쪽)과 왼쪽을 살린다 — 그립만 보이면 다시
-    /// 끌어올 수 있다.
-    /// </summary>
+    /// <summary>창이 화면보다 커져도 다시 끌 수 있도록 그립이 있는 위쪽과 왼쪽을 살린다.</summary>
     private static Vector2 ClampToScreen(Vector2 pos)
     {
         float scale = CanvasScale();
-        Vector2 size = MaxPanelSize();
+        Vector2 size = _panel is null ? MaxPanelSize() : _panel.sizeDelta;
         float canvasW = Screen.width / scale;
         float canvasH = Screen.height / scale;
 
@@ -568,8 +561,8 @@ internal static class LogOverlay
     /// <summary>
     /// 창을 내용에 맞춘다. 즉 <see cref="Width"/>는 <b>고정 폭이 아니라 최대 폭</b>이고
     /// 그보다 긴 줄은 넘쳐 흐른다 — 줄바꿈을 켜면 스크롤이 세는 논리 줄 수와 화면에
-    /// 그려지는 줄 수가 어긋난다. pivot이 좌상단이라 크기가 변해도 좌상단은 제자리이고,
-    /// 경계는 최대 크기로 잡아두었으므로(<see cref="ClampToScreen"/>) 위치를 다시 볼 필요가 없다.
+    /// 그려지는 줄 수가 어긋난다. 커진 창이 화면 밖으로 나가지 않도록 크기를 바꾼 뒤
+    /// 표시 위치만 다시 보정한다. 사용자가 둔 위치는 유지하므로 다시 작아지면 돌아간다.
     /// </summary>
     private static void Resize(int shownLines)
     {
@@ -580,7 +573,8 @@ internal static class LogOverlay
                                  _text.preferredWidth + PadX * 2f);
         _panel.sizeDelta = new Vector2(
             Math.Clamp(content, MinWidth, Width),
-            lineHeight * (Math.Max(shownLines, 1) + 1) + PadY * 2f);
+            lineHeight * Math.Max(shownLines, 1) + FontSize + PadY * 2f);
+        ApplyPosition();
     }
 
     private static void Create()
@@ -602,7 +596,7 @@ internal static class LogOverlay
 
         // 초기 크기는 임시값이다. 첫 Render가 내용에 맞춰 다시 잡는다 (Resize).
         float lineHeight = FontSize * 1.45f;
-        float height = lineHeight * (MaxLines + 1) + PadY * 2f;   // +1은 머리줄
+        float height = lineHeight * MaxLines + FontSize + PadY * 2f;
 
         var panel = new GameObject("Panel");
         panel.transform.SetParent(_root.transform, false);
@@ -620,7 +614,7 @@ internal static class LogOverlay
         rect.sizeDelta = new Vector2(Width, height);
         ApplyPosition();
 
-        CreateGrip(panel, lineHeight);
+        CreateGrip(panel, FontSize);
 
         _header = AddText(panel, "Header", TextAnchor.UpperLeft,
                           new Color(0.62f, 0.72f, 0.86f, 0.85f));
@@ -628,7 +622,7 @@ internal static class LogOverlay
         headerRect.anchorMin = new Vector2(0f, 1f);
         headerRect.anchorMax = new Vector2(1f, 1f);
         headerRect.pivot = new Vector2(0f, 1f);
-        headerRect.offsetMin = new Vector2(HeaderLeft, -lineHeight - PadY);
+        headerRect.offsetMin = new Vector2(HeaderLeft, -FontSize - PadY);
         headerRect.offsetMax = new Vector2(-PadX, -PadY);
 
         _text = AddText(panel, "Lines", TextAnchor.LowerLeft,
@@ -637,7 +631,7 @@ internal static class LogOverlay
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = new Vector2(PadX, PadY);
-        textRect.offsetMax = new Vector2(-PadX, -lineHeight - PadY);
+        textRect.offsetMax = new Vector2(-PadX, -FontSize - PadY);
 
         _root.SetActive(_visible);
         _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel; drag the grip to move it.");
@@ -647,7 +641,7 @@ internal static class LogOverlay
     /// 머리줄 왼쪽의 이동 손잡이. 판정 영역은 24×24이고 보이는 건 2×3 점뿐이다.
     /// 전부 <c>raycastTarget = false</c> — 판정은 <see cref="HandleDrag"/>가 좌표로 한다.
     /// </summary>
-    private static void CreateGrip(GameObject panel, float lineHeight)
+    private static void CreateGrip(GameObject panel, float headerHeight)
     {
         var area = new GameObject("Grip");
         area.transform.SetParent(panel.transform, false);
@@ -661,7 +655,7 @@ internal static class LogOverlay
         _grip.anchorMax = new Vector2(0f, 1f);
         _grip.pivot = new Vector2(0f, 0.5f);
         _grip.sizeDelta = new Vector2(GripSize, GripSize);
-        _grip.anchoredPosition = new Vector2(GripInset, -(PadY + lineHeight * 0.5f));
+        _grip.anchoredPosition = new Vector2(GripInset, -(PadY + headerHeight * 0.5f));
 
         const float dot = 3f;
         const float gap = 5f;
