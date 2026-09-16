@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.3")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.4")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
@@ -63,6 +63,14 @@ public class Plugin : BasePlugin
         ConfigEntry<int> scrollLines = Config.Bind(
             "Overlay", "ScrollLines", 3,
             "마우스 휠 한 칸에 움직일 줄 수. 커서가 로그창 위에 있을 때만 동작한다.");
+        ConfigEntry<float> overlayX = Config.Bind(
+            "Overlay", "PositionX", LogOverlay.AutoPosition,
+            "오버레이 왼쪽 위 모서리의 가로 위치(왼쪽에서부터). 화면 높이를 1080으로 둔 캔버스 " +
+            "좌표이며, 창 왼쪽 위 손잡이를 끌면 저장된다. 화면 밖 값은 표시할 때 안쪽으로 " +
+            "보정된다. -1이면 화면 왼쪽 아래 기본 위치에 띄운다.");
+        ConfigEntry<float> overlayY = Config.Bind(
+            "Overlay", "PositionY", LogOverlay.AutoPosition,
+            "오버레이 왼쪽 위 모서리의 세로 위치(위에서부터, 1080 기준). -1이면 기본 위치.");
 
         string? path = null;
         if (writeFile.Value)
@@ -109,10 +117,12 @@ public class Plugin : BasePlugin
                 toggle = KeyCode.F9;
             }
             LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value, overlayWidth.Value,
-                            toggle, scrollLines.Value);
+                            toggle, scrollLines.Value,
+                            new Vector2(overlayX.Value, overlayY.Value),
+                            pos => SavePosition(overlayX, overlayY, pos));
             logger.Mirror = LogOverlay.Enqueue;
             logger.MirrorNewPage = LogOverlay.NewPage;
-            logger.MirrorClear = LogOverlay.RequestClear;
+            logger.MirrorClear = LogOverlay.GameStarted;
         }
 
         // 씬이 바뀌면 화면만 비운다. 로비로 나왔는데 전투 로그가 떠 있으면 방해되니까.
@@ -139,6 +149,23 @@ public class Plugin : BasePlugin
         }
 
         if (path is not null) Log.LogInfo($"Battle log file: {path}");
+    }
+
+    /// <summary>X와 Y를 따로 대입하면 파일을 두 번 쓰므로 자동 저장을 잠시 끄고 한 번에 쓴다.</summary>
+    private void SavePosition(ConfigEntry<float> x, ConfigEntry<float> y, Vector2 pos)
+    {
+        bool auto = Config.SaveOnConfigSet;
+        Config.SaveOnConfigSet = false;
+        try
+        {
+            x.Value = pos.x;
+            y.Value = pos.y;
+        }
+        finally
+        {
+            Config.SaveOnConfigSet = auto;
+        }
+        Config.Save();
     }
 
     public override bool Unload()

@@ -34,7 +34,22 @@ internal static class LogOverlay
 
     private const float MinWidth = 200f;
 
-    private enum SignalKind { Line, Page, Clear }
+    private const float ReferenceHeight = 1080f;
+    private const float GripSize = 24f;
+    private const float GripInset = 3f;
+    /// <summary>머리줄 왼쪽 여백. 그립 자리를 비워둔다.</summary>
+    private const float HeaderLeft = GripInset + GripSize + 3f;
+
+    /// <summary>저장된 위치가 없을 때 창을 화면 좌하단에서 띄울 거리.</summary>
+    private const float DefaultMargin = 24f;
+
+    /// <summary>설정값이 이것이면(음수) 저장된 위치가 없는 것으로 본다.</summary>
+    public const float AutoPosition = -1f;
+
+    private static readonly Color GripIdle = new(1f, 1f, 1f, 0f);
+    private static readonly Color GripHot = new(1f, 1f, 1f, 0.12f);
+
+    private enum SignalKind { Line, Page, GameStart }
 
     /// <summary>
     /// 소켓 스레드 → 메인 스레드 전달 통로에 실리는 신호.
@@ -55,7 +70,7 @@ internal static class LogOverlay
 
         public static Signal Line(string text) => new(SignalKind.Line, text, 0);
         public static Signal Page(int round) => new(SignalKind.Page, null, round);
-        public static Signal Clear() => new(SignalKind.Clear, null, 0);
+        public static Signal GameStart() => new(SignalKind.GameStart, null, 0);
     }
 
     private sealed class Page
@@ -73,6 +88,9 @@ internal static class LogOverlay
     private static Text? _text;
     private static Text? _header;
     private static RectTransform? _panel;
+    private static RectTransform? _grip;
+    private static Image? _gripBack;
+    private static bool _gripHot;
     private static Font? _font;
     private static bool _failed;
     private static bool _dirty;
@@ -84,6 +102,22 @@ internal static class LogOverlay
 
     /// <summary>사용자가 직접 껐다. 이 경우 자동으로 다시 켜지 않는다.</summary>
     private static bool _userHidden;
+
+    /// <summary>판 안에 있다고 본 상태. 이 값이 켜지는 순간에만 <see cref="_userHidden"/>을 푼다.</summary>
+    private static bool _inGame;
+
+    /// <summary>
+    /// 판은 시작됐지만 아직 픽창이다. 픽창을 벗어나는 씬 전환에서 창을 띄운다.
+    /// </summary>
+    private static bool _awaitingBattle;
+    private static string? _pickScene;
+    private static int _roundsBeforeBattle;
+
+    /// <summary>
+    /// 지금 기록된 전투 씬에서 라운드를 받았다. 받기 전의 씬 전환은 로딩을 거치는 중으로
+    /// 보고 숨기지 않는다.
+    /// </summary>
+    private static bool _roundSeen;
 
     /// <summary>
     /// 전투가 벌어지고 있는 씬 이름. 씬 전환 자체를 "게임을 나갔다"로 보면 안 된다 —
@@ -108,8 +142,25 @@ internal static class LogOverlay
     public static KeyCode ToggleKey = KeyCode.F9;
     public static int ScrollLines = 3;
 
+    /// <summary>
+    /// 사용자가 둔 창 <b>좌상단</b> 위치 (x = 왼쪽에서, y = 위에서 아래로, 높이 1080 기준
+    /// 캔버스 좌표). 화면에 실제로 놓이는 위치는 이 값을 경계 안으로 보정한 것이고, 이 값
+    /// 자체는 바꾸지 않는다 — 해상도를 낮췄다 올렸을 때 원래 자리로 돌아오게.
+    /// </summary>
+    private static Vector2 _desired;
+    private static bool _autoPlace = true;
+    private static Vector2 _saved = new(AutoPosition, AutoPosition);
+    private static Action<Vector2>? _savePosition;
+
+    private static bool _dragging;
+    private static Vector2 _dragMouse;
+    private static Vector2 _dragPanel;
+    private static int _screenW;
+    private static int _screenH;
+
     public static void Init(ManualLogSource log, int maxLines, int fontSize, float width,
-                            KeyCode toggleKey, int scrollLines)
+                            KeyCode toggleKey, int scrollLines,
+                            Vector2 position, Action<Vector2> savePosition)
     {
         _log = log;
         MaxLines = Math.Max(1, maxLines);
@@ -117,6 +168,11 @@ internal static class LogOverlay
         Width = Math.Max(200f, width);
         ToggleKey = toggleKey;
         ScrollLines = Math.Max(1, scrollLines);
+        _autoPlace = !(float.IsFinite(position.x) && float.IsFinite(position.y)
+                       && position.x >= 0f && position.y >= 0f);
+        _desired = _autoPlace ? Vector2.zero : position;
+        _saved = position;
+        _savePosition = savePosition;
     }
 
     /// <summary>소켓 IO 스레드에서 호출된다. Unity를 건드리지 않는다.</summary>
@@ -124,29 +180,61 @@ internal static class LogOverlay
     public static void NewPage(int round) => Pending.Enqueue(Signal.Page(round));
 
     /// <summary>
-    /// 소켓 스레드에서 비우기를 요청한다. 리스트를 직접 비우면 다른 스레드에서
-    /// 만지게 되므로 큐를 거쳐 <see cref="Pump"/>가 처리한다.
+    /// 새 판이 시작됐다(<c>StartGameS2C</c>). 이 신호는 <b>픽창에서</b> 오므로 여기서는
+    /// 페이지만 비우고, 창은 픽창을 벗어나는 씬 전환(<see cref="OnSceneChanged"/>)에서 띄운다.
+    /// 소켓 스레드에서 부르므로 큐를 거쳐 <see cref="Pump"/>가 처리한다.
     /// </summary>
-    public static void RequestClear() => Pending.Enqueue(Signal.Clear());
+    public static void GameStarted() => Pending.Enqueue(Signal.GameStart());
 
     /// <summary>
-    /// 씬이 바뀌었다. <b>전투 씬을 벗어날 때만</b> 창을 숨긴다. 내용은 지우지 않는다 —
-    /// 씬 전환에 걸어 지우면 전투 중 로딩 씬 전환에 휩쓸려 페이지가 날아간다.
-    /// 메인 스레드(프레임 펌프)에서 부르는 것을 전제로 한다.
+    /// 씬이 바뀌었다. 창을 띄우고 숨기는 기준이 둘 다 씬 전환이다.
+    /// <list type="bullet">
+    /// <item>픽창을 벗어남 → 전투 씬에 들어간 것. 창을 띄운다.</item>
+    /// <item>그 뒤 라운드를 받기 전의 전환 → 로딩을 거치는 중. 전투 씬 기록만 옮긴다.</item>
+    /// <item>라운드를 받은 뒤 전투 씬을 벗어남 → 판을 나간 것. 창을 숨긴다.</item>
+    /// </list>
+    /// 내용은 지우지 않는다 — 씬 전환에 걸어 지우면 전투 중 로딩 씬 전환에 휩쓸려 페이지가
+    /// 날아간다. 메인 스레드(프레임 펌프)에서 부르는 것을 전제로 한다.
     /// </summary>
     public static void OnSceneChanged(string scene)
     {
+        if (_awaitingBattle)
+        {
+            if (scene == _pickScene) return;
+            _awaitingBattle = false;
+            _battleScene = scene;
+            _roundSeen = false;
+            if (!_userHidden) SetVisible(true);
+            return;
+        }
+
         if (_battleScene is null || scene == _battleScene) return;
 
+        // 픽창 씬으로 돌아왔으면 라운드를 받았든 아니든 판을 나간 것이다.
+        if (!_roundSeen && scene != _pickScene)
+        {
+            _battleScene = scene;
+            return;
+        }
+
         _battleScene = null;
+        _inGame = false;
         SetVisible(false);
-        _userHidden = false;   // 새 판에서는 다시 자동으로 뜬다
+    }
+
+    private static void EnterGame()
+    {
+        if (_inGame) return;
+        _inGame = true;
+        // 지난 판이나 로비에서 F9로 꺼둔 것이 새 판까지 이어지면 안 된다.
+        _userHidden = false;
     }
 
     private static void SetVisible(bool visible)
     {
         if (_visible == visible) return;
         _visible = visible;
+        if (!visible) EndDrag();
         if (_root is not null) _root.SetActive(visible);
     }
 
@@ -158,6 +246,8 @@ internal static class LogOverlay
         try
         {
             HandleKeys();
+            HandleDrag();
+            TrackScreenSize();
 
             while (Pending.TryDequeue(out Signal signal))
             {
@@ -172,12 +262,20 @@ internal static class LogOverlay
                     case SignalKind.Page:
                         OpenPage(signal.Round);
                         break;
-                    case SignalKind.Clear:
+                    case SignalKind.GameStart:
                         Pages.Clear();
                         _view = 0;
                         _offset = 0;
                         _following = true;
                         _dirty = true;
+                        _battleScene = null;
+                        _roundSeen = false;
+                        _inGame = false;
+                        EnterGame();
+                        _awaitingBattle = true;
+                        _pickScene = FramePump.CurrentScene;
+                        _roundsBeforeBattle = 0;
+                        SetVisible(false);
                         break;
                 }
             }
@@ -201,9 +299,8 @@ internal static class LogOverlay
     {
         if (Input.GetKeyDown(ToggleKey))
         {
-            _visible = !_visible;
+            SetVisible(!_visible);
             _userHidden = !_visible;
-            if (_root is not null) _root.SetActive(_visible);
         }
 
         if (Pages.Count == 0) return;
@@ -217,11 +314,140 @@ internal static class LogOverlay
         }
     }
 
-    private static bool IsPointerOverPanel()
+    private static bool IsPointerOverPanel() => IsPointerOver(_panel);
+
+    private static bool IsPointerOver(RectTransform? rect)
     {
-        if (_panel is null) return false;
+        if (rect is null) return false;
         // ScreenSpaceOverlay 캔버스라 카메라는 null을 넘긴다.
-        return RectTransformUtility.RectangleContainsScreenPoint(_panel, Input.mousePosition, null);
+        return RectTransformUtility.RectangleContainsScreenPoint(rect, Input.mousePosition, null);
+    }
+
+    /// <summary>
+    /// 그립 드래그. 이벤트를 받을 수 없으니(EventTrigger·MonoBehaviour 불가) 버튼 상태를
+    /// 폴링한다. 입력을 소비하지는 않으므로 게임도 같은 클릭을 받는다.
+    /// </summary>
+    private static void HandleDrag()
+    {
+        if (_panel is null || !_visible)
+        {
+            EndDrag();
+            return;
+        }
+
+        Vector2 mouse = Input.mousePosition;
+
+        if (!_dragging)
+        {
+            bool over = IsPointerOver(_grip);
+            SetGripHot(over);
+            if (!over || !Input.GetMouseButtonDown(0)) return;
+
+            _dragging = true;
+            _dragMouse = mouse;
+            _dragPanel = ClampToScreen(CurrentDesired());
+            return;
+        }
+
+        // 화면 좌표는 y가 위로, 저장 좌표는 y가 아래로 자란다.
+        Vector2 delta = (mouse - _dragMouse) / CanvasScale();
+        if (!_autoPlace || delta != Vector2.zero)
+        {
+            _desired = ClampToScreen(new Vector2(_dragPanel.x + delta.x, _dragPanel.y - delta.y));
+            _autoPlace = false;
+            ApplyPosition();
+        }
+
+        if (Input.GetMouseButtonUp(0) || !Input.GetMouseButton(0)) EndDrag();
+    }
+
+    /// <summary>드래그를 끝내고, 위치가 바뀌었으면 그때 한 번만 설정 파일에 쓴다.</summary>
+    private static void EndDrag()
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        SetGripHot(false);
+        if (_autoPlace) return;
+
+        var rounded = new Vector2(MathF.Round(_desired.x), MathF.Round(_desired.y));
+        _desired = rounded;
+        if (_panel is not null) ApplyPosition();
+        if (rounded == _saved) return;
+
+        try
+        {
+            _savePosition?.Invoke(rounded);
+            _saved = rounded;
+        }
+        catch (Exception e)
+        {
+            // 저장 실패로 오버레이 전체가 꺼지면 안 된다.
+            _log?.LogWarning($"Could not save overlay position: {e.Message}");
+        }
+    }
+
+    private static void SetGripHot(bool hot)
+    {
+        if (_gripHot == hot || _gripBack is null) return;
+        _gripHot = hot;
+        _gripBack.color = hot ? GripHot : GripIdle;
+    }
+
+    private static void TrackScreenSize()
+    {
+        if (Screen.width == _screenW && Screen.height == _screenH) return;
+        _screenW = Screen.width;
+        _screenH = Screen.height;
+        if (_panel is not null && !_dragging) ApplyPosition();
+    }
+
+    /// <summary>
+    /// 화면 픽셀 → 캔버스 단위. <c>matchWidthOrHeight = 1</c>이면 CanvasScaler의 배율은
+    /// 정확히 <c>Screen.height / 1080</c>이다. <c>canvas.scaleFactor</c>를 읽지 않는 이유:
+    /// 스케일러의 Update가 한 번 돌기 전(생성 직후, 숨겨진 동안)에는 1로 남아 있어 낮은
+    /// 해상도에서 위치를 엉뚱하게 보정한다.
+    /// </summary>
+    private static float CanvasScale() => Math.Max(Screen.height, 1) / ReferenceHeight;
+
+    private static void ApplyPosition()
+    {
+        Vector2 pos = ClampToScreen(CurrentDesired());
+        _panel!.anchoredPosition = new Vector2(pos.x, -pos.y);
+    }
+
+    /// <summary>저장된 위치가 없으면 최대 크기 창이 좌하단에서 24만큼 떨어지는 자리.</summary>
+    private static Vector2 CurrentDesired()
+    {
+        if (!_autoPlace) return _desired;
+        float canvasH = Screen.height / CanvasScale();
+        return new Vector2(DefaultMargin, canvasH - DefaultMargin - MaxPanelSize().y);
+    }
+
+    /// <summary>
+    /// 창이 가질 수 있는 가장 큰 크기. 경계 계산을 현재 크기가 아니라 이 값으로 해야
+    /// 로그 양에 따라 창이 커지고 줄어도 좌상단이 한 번도 움직이지 않는다.
+    /// </summary>
+    private static Vector2 MaxPanelSize()
+    {
+        float lineHeight = FontSize * 1.45f;
+        return new Vector2(Width, lineHeight * (MaxLines + 1) + PadY * 2f);
+    }
+
+    /// <summary>
+    /// 최대 크기 창이 화면 안에 들어가도록 좌상단(y는 위에서 아래로)을 제한한다.
+    /// 창이 화면보다 크면 위쪽(그립이 있는 쪽)과 왼쪽을 살린다 — 그립만 보이면 다시
+    /// 끌어올 수 있다.
+    /// </summary>
+    private static Vector2 ClampToScreen(Vector2 pos)
+    {
+        float scale = CanvasScale();
+        Vector2 size = MaxPanelSize();
+        float canvasW = Screen.width / scale;
+        float canvasH = Screen.height / scale;
+
+        float x = Math.Max(0f, Math.Min(pos.x, canvasW - size.x));
+        float y = Math.Max(0f, Math.Min(pos.y, canvasH - size.y));
+        return new Vector2(x, y);
     }
 
     /// <summary>
@@ -280,10 +506,21 @@ internal static class LogOverlay
     {
         // round > 0 = 진짜 라운드가 시작됐다 = 게임 안이다. round 0은 라운드 신호보다
         // 줄이 먼저 올 때 만드는 임시 페이지라, 그걸로 창을 띄우면 로비에서 떠버린다.
+        // 1라운드 신호는 전투 씬이 로드되기 전, 아직 픽창 씬일 때 온다(실측). 그걸로 전투
+        // 씬을 기록하면 곧 이어지는 진짜 전투 씬 전환을 "판을 나감"으로 읽어 창을 숨긴다.
+        // 그래서 픽창에서 받은 라운드는 씬 전환을 기다리고, 두 번째 라운드까지 전환이 없을
+        // 때만 씬이 안 바뀌는 판으로 보고 띄운다. 재접속(RunningGameS2C)은 판 시작 신호가
+        // 없어 곧바로 띄운다. 매 라운드 현재 씬을 다시 기록한다.
         if (round > 0)
         {
-            _battleScene = FramePump.CurrentScene;
-            if (!_userHidden) SetVisible(true);
+            EnterGame();
+            if (!_awaitingBattle || ++_roundsBeforeBattle >= 2)
+            {
+                _awaitingBattle = false;
+                _battleScene = FramePump.CurrentScene;
+                _roundSeen = true;
+                if (!_userHidden) SetVisible(true);
+            }
         }
 
         Pages.Add(new Page { Round = round });
@@ -331,16 +568,18 @@ internal static class LogOverlay
     /// <summary>
     /// 창을 내용에 맞춘다. 즉 <see cref="Width"/>는 <b>고정 폭이 아니라 최대 폭</b>이고
     /// 그보다 긴 줄은 넘쳐 흐른다 — 줄바꿈을 켜면 스크롤이 세는 논리 줄 수와 화면에
-    /// 그려지는 줄 수가 어긋난다. pivot이 좌하단이라 크기가 변해도 아래 모서리는 제자리다.
+    /// 그려지는 줄 수가 어긋난다. pivot이 좌상단이라 크기가 변해도 좌상단은 제자리이고,
+    /// 경계는 최대 크기로 잡아두었으므로(<see cref="ClampToScreen"/>) 위치를 다시 볼 필요가 없다.
     /// </summary>
     private static void Resize(int shownLines)
     {
         if (_panel is null || _text is null || _header is null) return;
 
         float lineHeight = FontSize * 1.45f;
-        float content = Math.Max(_header.preferredWidth, _text.preferredWidth);
+        float content = Math.Max(_header.preferredWidth + HeaderLeft + PadX,
+                                 _text.preferredWidth + PadX * 2f);
         _panel.sizeDelta = new Vector2(
-            Math.Clamp(content + PadX * 2f, MinWidth, Width),
+            Math.Clamp(content, MinWidth, Width),
             lineHeight * (Math.Max(shownLines, 1) + 1) + PadY * 2f);
     }
 
@@ -375,11 +614,13 @@ internal static class LogOverlay
         // ?? 널 병합이 제대로 안 먹으므로 직접 캐스팅한다.
         RectTransform rect = panel.transform.TryCast<RectTransform>()!;
         _panel = rect;
-        rect.anchorMin = new Vector2(0f, 0f);
-        rect.anchorMax = new Vector2(0f, 0f);
-        rect.pivot = new Vector2(0f, 0f);
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
         rect.sizeDelta = new Vector2(Width, height);
-        rect.anchoredPosition = new Vector2(24f, 24f);
+        ApplyPosition();
+
+        CreateGrip(panel, lineHeight);
 
         _header = AddText(panel, "Header", TextAnchor.UpperLeft,
                           new Color(0.62f, 0.72f, 0.86f, 0.85f));
@@ -387,7 +628,7 @@ internal static class LogOverlay
         headerRect.anchorMin = new Vector2(0f, 1f);
         headerRect.anchorMax = new Vector2(1f, 1f);
         headerRect.pivot = new Vector2(0f, 1f);
-        headerRect.offsetMin = new Vector2(PadX, -lineHeight - PadY);
+        headerRect.offsetMin = new Vector2(HeaderLeft, -lineHeight - PadY);
         headerRect.offsetMax = new Vector2(-PadX, -PadY);
 
         _text = AddText(panel, "Lines", TextAnchor.LowerLeft,
@@ -399,7 +640,50 @@ internal static class LogOverlay
         textRect.offsetMax = new Vector2(-PadX, -lineHeight - PadY);
 
         _root.SetActive(_visible);
-        _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel.");
+        _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel; drag the grip to move it.");
+    }
+
+    /// <summary>
+    /// 머리줄 왼쪽의 이동 손잡이. 판정 영역은 24×24이고 보이는 건 2×3 점뿐이다.
+    /// 전부 <c>raycastTarget = false</c> — 판정은 <see cref="HandleDrag"/>가 좌표로 한다.
+    /// </summary>
+    private static void CreateGrip(GameObject panel, float lineHeight)
+    {
+        var area = new GameObject("Grip");
+        area.transform.SetParent(panel.transform, false);
+        _gripBack = area.AddComponent<Image>();
+        _gripBack.color = GripIdle;
+        _gripBack.raycastTarget = false;
+        _gripHot = false;
+
+        _grip = area.transform.TryCast<RectTransform>()!;
+        _grip.anchorMin = new Vector2(0f, 1f);
+        _grip.anchorMax = new Vector2(0f, 1f);
+        _grip.pivot = new Vector2(0f, 0.5f);
+        _grip.sizeDelta = new Vector2(GripSize, GripSize);
+        _grip.anchoredPosition = new Vector2(GripInset, -(PadY + lineHeight * 0.5f));
+
+        const float dot = 3f;
+        const float gap = 5f;
+        var dotColor = new Color(0.62f, 0.72f, 0.86f, 0.7f);
+        for (int row = 0; row < 3; row++)
+        {
+            for (int col = 0; col < 2; col++)
+            {
+                var go = new GameObject("Dot");
+                go.transform.SetParent(area.transform, false);
+                Image image = go.AddComponent<Image>();
+                image.color = dotColor;
+                image.raycastTarget = false;
+
+                RectTransform r = go.transform.TryCast<RectTransform>()!;
+                r.anchorMin = new Vector2(0.5f, 0.5f);
+                r.anchorMax = new Vector2(0.5f, 0.5f);
+                r.pivot = new Vector2(0.5f, 0.5f);
+                r.sizeDelta = new Vector2(dot, dot);
+                r.anchoredPosition = new Vector2((col - 0.5f) * gap, (1 - row) * gap);
+            }
+        }
     }
 
     private static Text AddText(GameObject parent, string name, TextAnchor anchor, Color color)
