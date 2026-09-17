@@ -559,21 +559,14 @@ internal static class LogOverlay
     }
 
     /// <summary>
-    /// 창을 내용에 맞춘다. 즉 <see cref="Width"/>는 <b>고정 폭이 아니라 최대 폭</b>이고
-    /// 그보다 긴 줄은 넘쳐 흐른다 — 줄바꿈을 켜면 스크롤이 세는 논리 줄 수와 화면에
-    /// 그려지는 줄 수가 어긋난다. 커진 창이 화면 밖으로 나가지 않도록 크기를 바꾼 뒤
-    /// 표시 위치만 다시 보정한다. 사용자가 둔 위치는 유지하므로 다시 작아지면 돌아간다.
+    /// 로그 내용의 길이/줄 수와 관계없이 창을 항상 최대 크기로 유지한다.
+    /// 가로는 <see cref="Width"/>, 세로는 <see cref="MaxLines"/> 기준 최대 높이를 사용한다.
     /// </summary>
     private static void Resize(int shownLines)
     {
-        if (_panel is null || _text is null || _header is null) return;
+        if (_panel is null) return;
 
-        float lineHeight = FontSize * 1.45f;
-        float content = Math.Max(_header.preferredWidth + HeaderLeft + PadX,
-                                 _text.preferredWidth + PadX * 2f);
-        _panel.sizeDelta = new Vector2(
-            Math.Clamp(content, MinWidth, Width),
-            lineHeight * Math.Max(shownLines, 1) + FontSize + PadY * 2f);
+        _panel.sizeDelta = MaxPanelSize();
         ApplyPosition();
     }
 
@@ -594,7 +587,7 @@ internal static class LogOverlay
         // 안 길어져서 빈 배경이 넓어진다.
         scaler.matchWidthOrHeight = 1f;
 
-        // 초기 크기는 임시값이다. 첫 Render가 내용에 맞춰 다시 잡는다 (Resize).
+        // 처음부터 최대 크기로 만든다. Resize도 같은 최대 크기를 계속 유지한다.
         float lineHeight = FontSize * 1.45f;
         float height = lineHeight * MaxLines + FontSize + PadY * 2f;
 
