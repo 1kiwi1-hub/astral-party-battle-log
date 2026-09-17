@@ -83,6 +83,12 @@ Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러
 3. ZIP 안의 `BepInEx` 폴더를 게임 폴더(`Astral Party/8vJXnINT/`)에 덮어씁니다.
 4. 게임을 실행합니다.
 
+이미 다른 모드로 BepInEx 6 IL2CPP가 설치되어 있다면 BepInEx를 다시 설치할 필요가 없습니다.
+이 경우 최신 플러그인 ZIP의 내용을 게임 실행 파일(`AstralParty_INT.exe`)이 있는 게임 폴더에
+그대로 풀어 주세요. `BepInEx` 폴더가 `BepInEx/BepInEx`처럼 한 단계 더 중첩되면 플러그인이
+로드되지 않으므로, 게임 폴더 바로 아래에 `BepInEx` 폴더가 있어야 합니다. 처음 설치한
+BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성합니다.
+
 **카드/스킬 이름표(`names.tsv`)는 따로 받지 않아도 됩니다.** 플러그인이 게임에 처음
 들어갈 때 게임 설정에서 직접 만듭니다. 만들어지기 전까지는 이름 대신 ID가 보입니다.
 
@@ -107,21 +113,21 @@ Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러
 
 ## 설정
 
-`BepInEx/config/astralparty.battlelog.cfg` — 게임을 한 번 실행하면 만들어진다.
+`BepInEx/config/astralparty.battlelog.cfg` — 게임을 한 번 실행하면 만들어집니다.
 
 | | 기본값 | |
 | --- | --- | --- |
 | `Overlay.Enabled` | true | 인게임 오버레이 |
 | `Overlay.Lines` | 14 | 한 화면에 보일 줄 수 |
 | `Overlay.FontSize` | 15 | 글자 크기 |
-| `Overlay.Width` | 780 | **최대** 가로 폭. 창은 내용에 맞춰 줄어든다 |
+| `Overlay.Width` | 780 | **최대** 가로 폭. 창은 내용에 맞춰 줄어듭니다 |
 | `Overlay.ToggleKey` | F9 | 켜고 끄는 키 |
 | `Overlay.ScrollLines` | 3 | 휠 한 칸에 움직일 줄 수 |
-| `Overlay.PositionX` | -1 | 창 왼쪽 위 모서리의 가로 위치 (화면 높이 1080 기준 좌표). 손잡이를 끌면 저장된다 |
+| `Overlay.PositionX` | -1 | 창 왼쪽 위 모서리의 가로 위치 (화면 높이 1080 기준 좌표). 손잡이를 끌면 저장됩니다 |
 | `Overlay.PositionY` | -1 | 창 왼쪽 위 모서리의 세로 위치 (위에서부터). -1이거나 값을 지우면 화면 왼쪽 아래 기본 위치 |
 | `Output.WriteFile` | true | `battle-log.txt`에도 남기기 |
 | `Output.LogCards` | true | 공개된 카드 기록 |
-| `Names.Rebuild` | false | 이름표를 다시 만든다 (게임 업데이트 후) |
+| `Names.Rebuild` | false | 이름표를 다시 만듭니다 (게임 업데이트 후) |
 
 ## 개발 문서
 
@@ -154,14 +160,14 @@ dotnet build AstralPartyBattleLog.csproj -c Release
 ## 크레딧
 
 인게임 오버레이 구현 방식은 **[astral-party-korean-patch](https://github.com/maynut02/astral-party-korean-patch)**
-의 `OverlayUi`를 참조했다 (작성자 허락을 받았다). IMGUI 대신 uGUI를 쓰고 게임 폰트를
-그대로 가져오는 접근이 거기서 왔다.
+의 `OverlayUi`를 참조했습니다 (작성자 허락을 받았습니다). IMGUI 대신 uGUI를 사용하고 게임 폰트를
+그대로 가져오는 접근도 해당 프로젝트에서 참고했습니다.
 
 ## 라이선스
 
-[MIT](LICENSE) — **이 리포의 코드에만** 적용된다.
+[MIT](LICENSE) — **이 리포의 코드에만** 적용됩니다.
 
 Astral Party 자체와 그 자산·프로토콜·거기서 파생된 데이터(카드/스킬/캐릭터 이름,
-설정 테이블)는 각 권리자의 것이고, 그런 파일은 이 리포에 넣지 않았다.
-`names.tsv`가 커밋되어 있지 않은 이유도 그것이다 — 플러그인이 각자의 게임에서
-직접 만든다.
+설정 테이블)는 각 권리자의 것이고, 그런 파일은 이 리포에 넣지 않았습니다.
+`names.tsv`가 커밋되어 있지 않은 이유도 그 때문입니다 — 플러그인이 각자의 게임에서
+직접 만듭니다.
