@@ -1,10 +1,11 @@
-# 기술 노트
+# 아키텍처 및 제약
 
-이 플러그인이 왜 이런 모양인지, 그리고 손대기 전에 알아야 할 것들.
-**일반적인 BepInEx 모딩과 전제가 다르므로 먼저 읽을 것.**
+현재 구현 구조와 변경 시 지켜야 할 기술 제약을 정리한 개발자용 문서입니다.
+일반적인 BepInEx 모딩과 전제가 다르므로 코드를 수정하기 전에 먼저 읽어 주세요.
 
 기여 규칙과 지켜야 할 경계는 [CONTRIBUTING.md](../CONTRIBUTING.md)에 따로 있다.
-조사 과정은 [FINDINGS.md](FINDINGS.md), 초기 설계는 [LOGGER-DESIGN.md](LOGGER-DESIGN.md).
+조사 과정은 [FINDINGS.md](FINDINGS.md), 현재 구현과 다를 수 있는 초기 설계는
+[LOGGER-DESIGN.md](LOGGER-DESIGN.md)에 보관되어 있습니다.
 
 ---
 
@@ -837,4 +838,3 @@ PK(battle)만 예외다 — 머리줄은 공격자 이름인데 효과는 방어
 - `HexDumpOpcodes` — 지정한 cmdID의 본문을 hex로 덤프한다. 디코딩이 안 맞을 때
   쓴다. 허용목록 안의 opcode만 대상이 되므로 카드 메시지는 덤프되지 않는다.
   필드 번호와 wire type을 손으로 읽는 게 가장 빠른 진단이다.
-

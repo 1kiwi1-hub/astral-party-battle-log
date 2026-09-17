@@ -1,6 +1,11 @@
 # 전투 로그 모드 — 구현 사양
 
-조사 완료 상태. 아래는 전부 `AstralParty.Runtime.dll` 디컴파일로 확인된 사실.
+> [!NOTE]
+> 구현 전 작성한 초기 설계 기록입니다. 일부 계획은 현재 구현과 다릅니다.
+> 최신 구조와 제약은 [ARCHITECTURE.md](ARCHITECTURE.md)를 기준으로 확인해 주세요.
+
+아래 내용은 `AstralParty.Runtime.dll` 디컴파일로 확인한 사실과 당시 구현 계획을
+함께 보존합니다.
 
 ## 1. 후킹 지점
 

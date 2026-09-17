@@ -2,6 +2,10 @@
 
 조사일 2026-09-13 · 대상 `8vJXnINT` (INT 빌드) · 게임 실행/주입 없이 파일 읽기만으로 수행
 
+이 문서는 구현 전 조사 근거를 보존하는 기록입니다. 현재 동작과 변경 규칙은
+[ARCHITECTURE.md](ARCHITECTURE.md)와 [CONTRIBUTING.md](../CONTRIBUTING.md)를
+우선해서 확인해 주세요.
+
 ## 구조
 
 | 항목 | 값 |
